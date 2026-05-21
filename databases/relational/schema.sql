@@ -30,21 +30,33 @@ CREATE TABLE IF NOT EXISTS metro_schedules (
     schedule_id VARCHAR(10) PRIMARY KEY,
     line VARCHAR(10) NOT NULL, -- M1, M2, M3, M4 (配合 json 欄位名)
     direction VARCHAR(50) NOT NULL,
+    origin_station_id VARCHAR(10) REFERENCES metro_stations(station_id),
+    destination_station_id VARCHAR(10) REFERENCES metro_stations(station_id),
     stops_in_order TEXT[] NOT NULL,
+    first_train_time TIME NOT NULL,
+    last_train_time TIME NOT NULL,
     travel_time_from_origin_min JSONB NOT NULL, -- 各站距離起點的分鐘數
     base_fare_usd NUMERIC(5, 2) DEFAULT 0.80,
     per_stop_rate_usd NUMERIC(5, 2) DEFAULT 0.30,
-    frequency_min INT NOT NULL
+    frequency_min INT NOT NULL,
+    operates_on TEXT[] NOT NULL
 );
 
 -- 4. 國鐵時刻表
 CREATE TABLE IF NOT EXISTS national_rail_schedules (
     schedule_id VARCHAR(10) PRIMARY KEY,
+    line VARCHAR(10) NOT NULL,
     service_type VARCHAR(20) NOT NULL CHECK (service_type IN ('normal', 'express')),
+    direction VARCHAR(50) NOT NULL,
+    origin_station_id VARCHAR(10) REFERENCES national_rail_stations(station_id),
+    destination_station_id VARCHAR(10) REFERENCES national_rail_stations(station_id),
     frequency_min INT NOT NULL,
-    days_applicable VARCHAR(20) NOT NULL, -- 'all_week' 或 'weekdays_only'
+    first_train_time TIME NOT NULL,
+    last_train_time TIME NOT NULL,
+    operates_on TEXT[] NOT NULL,
     stops_in_order TEXT[] NOT NULL,
     passed_through_stations TEXT[], -- 快車經過但不停靠的車站
+    travel_time_from_origin_min JSONB NOT NULL,
     standard_base_fare NUMERIC(5, 2) DEFAULT 2.50,
     standard_per_stop_rate NUMERIC(5, 2) DEFAULT 1.50,
     first_base_fare NUMERIC(5, 2) DEFAULT 4.00,
@@ -57,6 +69,7 @@ CREATE TABLE IF NOT EXISTS national_rail_seat_layouts (
     layout_id VARCHAR(10) NOT NULL,
     schedule_id VARCHAR(10) REFERENCES national_rail_schedules(schedule_id),
     coach VARCHAR(5) NOT NULL CHECK (coach IN ('A', 'B')), -- Coach A (First), Coach B (Standard)
+    fare_class VARCHAR(20) NOT NULL CHECK (fare_class IN ('standard', 'first')),
     seat_id VARCHAR(5) NOT NULL, -- A01-A06, B01-B12
     "row" INT NOT NULL,
     "column" VARCHAR(2) NOT NULL,
@@ -67,6 +80,8 @@ CREATE TABLE IF NOT EXISTS national_rail_seat_layouts (
 CREATE TABLE IF NOT EXISTS registered_users (
     user_id VARCHAR(10) PRIMARY KEY,
     full_name VARCHAR(100) NOT NULL,
+    first_name VARCHAR(50),
+    surname VARCHAR(50),
     email VARCHAR(150) UNIQUE NOT NULL,
     password VARCHAR(255) NOT NULL,
     phone VARCHAR(30),
@@ -107,7 +122,7 @@ CREATE TABLE IF NOT EXISTS metro_travel_history (
     travel_date DATE NOT NULL,
     ticket_type VARCHAR(20) NOT NULL CHECK (ticket_type IN ('single', 'day_pass')),
     day_pass_ref VARCHAR(10) REFERENCES metro_travel_history(trip_id), -- 指向第一次買日票的紀錄
-    stops_travelled INT NOT NULL,
+    stops_travelled INT,
     amount_usd NUMERIC(5, 2) NOT NULL DEFAULT 0.00,
     status VARCHAR(20) NOT NULL CHECK (status IN ('completed', 'in_progress', 'cancelled')),
     purchased_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
