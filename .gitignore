@@ -59,3 +59,7 @@ gradio_cached_examples/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+
+# env
+docker-compose.yml
