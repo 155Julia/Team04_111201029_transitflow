@@ -41,8 +41,8 @@ services:
     image: dpage/pgadmin4
     container_name: transitflow_pgadmin_v2a
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_EMAIL: s0903057896@gmail.com
+      PGADMIN_DEFAULT_PASSWORD: Ss2688737
     ports:
       - "5051:80"
     depends_on:
