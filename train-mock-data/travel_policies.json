@@ -133,5 +133,19 @@
     ],
     "smoking_and_vaping": "Strictly prohibited on all train carriages and at all station platforms.",
     "conduct": "Passengers behaving in a manner that causes distress or danger to other passengers or staff may be removed from the train. In serious cases, the operator reserves the right to involve law enforcement."
-  }
+  },
+  "custom_policies": [
+    {
+      "title": "Large Dog Transit Policy",
+      "category": "conduct",
+      "content": "Large dogs weighing over 15kg are permitted on Metro and National Rail services only if they wear a secure muzzle and are kept on a short lead under 1 meter. Large dogs are strictly prohibited inside First Class coaches on National Rail.",
+      "source_file": "travel_policies.json"
+    },
+    {
+      "title": "Severe Weather and Typhoon Refund Regulations",
+      "category": "refund",
+      "content": "In the event of severe weather conditions such as Typhoons or Landslides where service is officially suspended by TransitFlow, all affected single, return, and advanced bookings are eligible for a 100% full refund with zero cancellation fees, regardless of the ticket class or booking window.",
+      "source_file": "travel_policies.json"
+    }
+  ]
 }
