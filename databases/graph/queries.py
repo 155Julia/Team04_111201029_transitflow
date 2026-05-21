@@ -25,34 +25,52 @@ def query_shortest_route(
 ) -> dict:
     """
     Find the fastest path between two stations, minimising total travel time.
+    Uses shortestPath with travel_time_min weights on CONNECTED_TO edges.
+    INTERCHANGE_TO edges are treated as 5-minute transfer time.
     """
     query = """
     MATCH (start), (end)
     WHERE (start.station_id = $start OR start.rail_station_id = $start)
       AND (end.station_id = $end OR end.rail_station_id = $end)
-    MATCH p = shortestPath((start)-[:CONNECTED_TO|INTERCHANGE_TO*..40]->(end))
-    RETURN p IS NOT NULL as found,
-           [n in nodes(p) | {
-               "station_id": coalesce(n.station_id, n.rail_station_id), 
-               "name": n.name, 
-               "lines": n.lines
-           }] as path,
-           length(p) as total_time_min
+    MATCH p = shortestPath((start)-[:CONNECTED_TO|INTERCHANGE_TO*]-(end))
+    WITH p,
+         reduce(total = 0, r IN relationships(p) |
+             total + CASE type(r)
+                 WHEN 'INTERCHANGE_TO' THEN 5
+                 ELSE coalesce(r.travel_time_min, 3)
+             END
+         ) AS total_time_min
+    RETURN
+        [n IN nodes(p) | {
+            station_id: coalesce(n.station_id, n.rail_station_id),
+            name: n.name,
+            lines: n.lines
+        }] AS path,
+        total_time_min
+    ORDER BY total_time_min ASC
+    LIMIT 1
     """
     with _driver() as driver:
         with driver.session() as session:
             res = session.run(query, start=origin_id, end=destination_id)
             record = res.single()
-            if record and record["found"]:
+            if record:
                 return {
                     "found": True,
                     "origin_id": origin_id,
                     "destination_id": destination_id,
-                    "total_time_min": record["total_time_min"] * 2,  # 模擬權重分鐘數
+                    "total_time_min": record["total_time_min"],
                     "path": record["path"],
-                    "legs": record["total_time_min"]
+                    "legs": len(record["path"]) - 1,
                 }
-            return {"found": False, "origin_id": origin_id, "destination_id": destination_id, "path": [], "legs": 0}
+            return {
+                "found": False,
+                "origin_id": origin_id,
+                "destination_id": destination_id,
+                "total_time_min": 0,
+                "path": [],
+                "legs": 0,
+            }
 
 
 # ── CHEAPEST ROUTE (Dijkstra by fare) ────────────────────────────────────────
@@ -65,22 +83,31 @@ def query_cheapest_route(
 ) -> dict:
     """
     Find the cheapest path between two stations, minimising total estimated fare.
+    Metro stops: base 0.80 + 0.30/stop. National rail stops: base 2.50 + 1.50/stop (standard).
+    Interchange transfers are free.
     """
     query = """
     MATCH (start), (end)
     WHERE (start.station_id = $start OR start.rail_station_id = $start)
       AND (end.station_id = $end OR end.rail_station_id = $end)
-    MATCH p = (start)-[:CONNECTED_TO|INTERCHANGE_TO*..40]->(end)
-    UNWIND relationships(p) AS rel
-    WITH p, sum(CASE 
-        WHEN type(rel) = 'INTERCHANGE_TO' THEN 0 
-        WHEN 'NationalRailStation' IN labels(startNode(rel)) THEN 3 
-        ELSE 1 
-    END) AS total_cost
-    RETURN [n in nodes(p) | coalesce(n.name, "Unknown")] as stations,
-           [n in nodes(p) | coalesce(n.station_id, n.rail_station_id)] as ids,
-           total_cost
-    ORDER BY total_cost ASC
+    MATCH p = shortestPath((start)-[:CONNECTED_TO|INTERCHANGE_TO*]-(end))
+    WITH p,
+         reduce(total = 0.0, r IN relationships(p) |
+             total + CASE type(r)
+                 WHEN 'INTERCHANGE_TO' THEN 0.0
+                 WHEN 'CONNECTED_TO' THEN
+                     CASE WHEN 'NationalRailStation' IN labels(startNode(r))
+                          THEN 1.50
+                          ELSE 0.30
+                     END
+                 ELSE 0.0
+             END
+         ) AS total_fare_usd
+    RETURN
+        [n IN nodes(p) | coalesce(n.name, 'Unknown')] AS stations,
+        [n IN nodes(p) | coalesce(n.station_id, n.rail_station_id)] AS ids,
+        total_fare_usd
+    ORDER BY total_fare_usd ASC
     LIMIT 1
     """
     with _driver() as driver:
@@ -90,9 +117,9 @@ def query_cheapest_route(
             if record:
                 return {
                     "found": True,
-                    "total_fare_usd": float(record["total_cost"] * 1.5),
+                    "total_fare_usd": round(float(record["total_fare_usd"]), 2),
                     "stations": record["stations"],
-                    "legs": len(record["ids"]) - 1
+                    "legs": len(record["ids"]) - 1,
                 }
             return {"found": False, "total_fare_usd": 0.0, "stations": [], "legs": 0}
 
@@ -140,27 +167,34 @@ def query_interchange_path(origin_id: str, destination_id: str) -> dict:
     MATCH (start), (end)
     WHERE (start.station_id = $start OR start.rail_station_id = $start)
       AND (end.station_id = $end OR end.rail_station_id = $end)
-    MATCH p = (start)-[:CONNECTED_TO|INTERCHANGE_TO*..40]->(end)
+    MATCH p = shortestPath((start)-[:CONNECTED_TO|INTERCHANGE_TO*]-(end))
     WHERE ANY(r IN relationships(p) WHERE type(r) = 'INTERCHANGE_TO')
-    WITH p, length(p) as total_steps
-    ORDER BY total_steps ASC
+    WITH p,
+         reduce(total = 0, r IN relationships(p) |
+             total + CASE type(r)
+                 WHEN 'INTERCHANGE_TO' THEN 5
+                 ELSE coalesce(r.travel_time_min, 3)
+             END
+         ) AS total_time_min
+    RETURN
+        [n IN nodes(p) | coalesce(n.name, 'Unknown')] AS stations,
+        [n IN nodes(p) | coalesce(n.station_id, n.rail_station_id)] AS ids,
+        total_time_min
+    ORDER BY total_time_min ASC
     LIMIT 1
-    RETURN [n in nodes(p) | coalesce(n.name, "Unknown")] as stations,
-           [n in nodes(p) | coalesce(n.station_id, n.rail_station_id)] as ids,
-           total_steps
     """
     with _driver() as driver:
         with driver.session() as session:
             res = session.run(query, start=origin_id, end=destination_id)
             record = res.single()
             if record:
-                # 找出路徑中的換乘點
-                interchanges = [id for id in record["ids"] if id in ["MS01", "NR01", "MS07", "NR03", "MS15", "NR07"]]
+                interchange_ids = {"MS01", "NR01", "MS07", "NR03", "MS15", "NR07"}
+                interchanges = [sid for sid in record["ids"] if sid in interchange_ids]
                 return {
                     "found": True,
                     "stations": record["stations"],
                     "interchange_points": list(set(interchanges)),
-                    "total_time_min": record["total_steps"] * 3
+                    "total_time_min": record["total_time_min"],
                 }
             return {"found": False, "stations": [], "interchange_points": [], "total_time_min": 0}
 

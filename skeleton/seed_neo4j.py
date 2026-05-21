@@ -26,59 +26,56 @@ def seed_neo4j():
         session.run("MATCH (n) DETACH DELETE n;")
         print("🧹 舊的 Neo4j 車站拓撲資料已徹底清空")
 
-        # 3. 建立 [地鐵站] 節點 (:MetroStation)
+        # 3. 建立 [地鐵站] 節點 (:MetroStation)，用 MERGE 避免重跑時產生重複節點
         for station in metro_stations:
             session.run("""
-                CREATE (m:MetroStation {
-                    station_id: $station_id,
-                    name: $name,
-                    lines: $lines
-                })
+                MERGE (m:MetroStation {station_id: $station_id})
+                SET m.name = $name, m.lines = $lines
             """, station_id=station["station_id"], name=station["name"], lines=station["lines"])
         print(f"🚉 [地鐵] 已成功建立 {len(metro_stations)} 個車站節點 (:MetroStation)")
 
-        # 4. 建立 [國鐵站] 節點 (:NationalRailStation)
+        # 4. 建立 [國鐵站] 節點 (:NationalRailStation)，用 MERGE 避免重跑時產生重複節點
         for station in rail_stations:
             session.run("""
-                CREATE (r:NationalRailStation {
-                    rail_station_id: $station_id,
-                    name: $name,
-                    lines: $lines
-                })
+                MERGE (r:NationalRailStation {rail_station_id: $station_id})
+                SET r.name = $name, r.lines = $lines
             """, station_id=station["station_id"], name=station["name"], lines=station["lines"])
         print(f"🚂 [國鐵] 已成功建立 {len(rail_stations)} 個車站節點 (:NationalRailStation)")
 
         # 5. 建立 [地鐵線相鄰路軌] 雙向連線關係 [:CONNECTED_TO] (metro links)
+        # adjacent_stations 是 dict 陣列，需取出 station_id 和 travel_time_min
         for station in metro_stations:
-            for adj_id in station.get("adjacent_stations", []):
+            for adj in station.get("adjacent_stations", []):
+                adj_id = adj["station_id"]
+                travel_time = adj.get("travel_time_min", 3)
+                line = adj.get("line", "")
                 session.run("""
                     MATCH (a:MetroStation {station_id: $curr_id}), (b:MetroStation {station_id: $adj_id})
-                    MERGE (a)-[:CONNECTED_TO]->(b)
-                    MERGE (b)-[:CONNECTED_TO]->(a)
-                """, curr_id=station["station_id"], adj_id=adj_id)
-        print("Tracks 🛤️ [地鐵線] (metro links) 建置雙向連線完畢！")
+                    MERGE (a)-[r:CONNECTED_TO {line: $line}]->(b)
+                    SET r.travel_time_min = $travel_time
+                    MERGE (b)-[r2:CONNECTED_TO {line: $line}]->(a)
+                    SET r2.travel_time_min = $travel_time
+                """, curr_id=station["station_id"], adj_id=adj_id,
+                     travel_time=travel_time, line=line)
+        print("🛤️ [地鐵線] (metro links) 建置雙向連線完畢（含 travel_time_min）！")
 
         # 6. 建立 [國鐵線相鄰路軌] 雙向連線關係 [:CONNECTED_TO] (rail links)
-        # 依據資料摘要：NR1 線為 NR01-NR05，NR2 線為 NR01 與 NR06-NR10
-        nr1_route = ["NR01", "NR02", "NR03", "NR04", "NR05"]
-        nr2_route = ["NR01", "NR06", "NR07", "NR08", "NR09", "NR10"]
-
-        # 串連 NR1 鐵軌
-        for i in range(len(nr1_route) - 1):
-            session.run("""
-                MATCH (a:NationalRailStation {rail_station_id: $curr}), (b:NationalRailStation {rail_station_id: $next})
-                MERGE (a)-[:CONNECTED_TO]->(b)
-                MERGE (b)-[:CONNECTED_TO]->(a)
-            """, curr=nr1_route[i], next=nr1_route[i+1])
-
-        # 串連 NR2 鐵軌
-        for i in range(len(nr2_route) - 1):
-            session.run("""
-                MATCH (a:NationalRailStation {rail_station_id: $curr}), (b:NationalRailStation {rail_station_id: $next})
-                MERGE (a)-[:CONNECTED_TO]->(b)
-                MERGE (b)-[:CONNECTED_TO]->(a)
-            """, curr=nr2_route[i], next=nr2_route[i+1])
-        print("Tracks 🛣️ [國鐵線] (rail links) 建置雙向連線完畢！")
+        # 從 national_rail_stations.json 的 adjacent_stations 讀取，同樣是 dict 陣列
+        for station in rail_stations:
+            for adj in station.get("adjacent_stations", []):
+                adj_id = adj["station_id"]
+                travel_time = adj.get("travel_time_min", 15)
+                line = adj.get("line", "")
+                session.run("""
+                    MATCH (a:NationalRailStation {rail_station_id: $curr}),
+                          (b:NationalRailStation {rail_station_id: $next})
+                    MERGE (a)-[r:CONNECTED_TO {line: $line}]->(b)
+                    SET r.travel_time_min = $travel_time
+                    MERGE (b)-[r2:CONNECTED_TO {line: $line}]->(a)
+                    SET r2.travel_time_min = $travel_time
+                """, curr=station["station_id"], next=adj_id,
+                     travel_time=travel_time, line=line)
+        print("🛣️ [國鐵線] (rail links) 建置雙向連線完畢（含 travel_time_min）！")
 
         # 7. 建立 [3 大跨系統車站內轉乘地下道] 雙向邊關係 [:INTERCHANGE_TO] (interchange links)
         interchanges = [
