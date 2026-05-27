@@ -170,5 +170,29 @@
       }
     ],
     "exclusions": "Delays caused by third-party events (extreme weather, security incidents, government directives, or passenger-caused incidents) are not eligible for compensation."
+  },
+  {
+    "policy_id": "RF006",
+    "label": "National Rail – Partially Used Return Ticket",
+    "applies_to": {
+      "network_type": "national_rail",
+      "ticket_types": ["return"]
+    },
+    "rules": {
+      "outbound_used_condition": "If the outbound leg has already been traveled (booking status for outbound is 'completed'), only the return leg is eligible for a refund.",
+      "calculation": "The refund for the return leg is calculated as: (Total Paid Amount - Standard Single Fare for the outbound leg) - Admin Fee.",
+      "deadline": "The cancellation request must be submitted at least 2 hours before the scheduled departure time of the return leg."
+    },
+    "notes": "If the return leg departure time has already passed, the ticket is marked as a no-show and its value becomes 0."
+  },
+  {
+    "policy_id": "RF007",
+    "label": "Duplicate Bookings Refund Policy",
+    "applies_to": {
+      "network_type": "all",
+      "ticket_types": ["single", "return", "day_pass"]
+    },
+    "condition": "Passenger accidentally purchases two identical tickets for the same user, same route, and same departure time.",
+    "resolution": "A 100% full refund with zero admin fees will be granted for the second (duplicate) booking, provided the claim is submitted via customer service within 1 hour of the purchase time and before the scheduled departure."
   }
 ]

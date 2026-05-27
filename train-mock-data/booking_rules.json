@@ -27,7 +27,10 @@
       "what_can_be_changed": ["Travel date", "Scheduled service (same route)", "Seat selection"],
       "what_cannot_be_changed": ["Route (origin/destination)", "Fare class (standard to first or vice versa)", "Ticket type (single to return or vice versa)"],
       "how_to_change": "Changes can be made via the app, website, or at a staffed ticket counter.",
-      "express_service_note": "Ticket changes are not permitted for express service bookings within 24 hours of departure."
+      "express_service_note": "Ticket changes are not permitted for express service bookings within 24 hours of departure.",
+      "fare_difference_policy": "If the new ticket is more expensive, the passenger must pay the fare difference plus the $1.00 change fee. If the new ticket is cheaper, the change fee is deducted from the difference, and the remainder is refunded to the original payment method.",
+      "max_changes_allowed": 2,
+      "seat_reassignment_on_change": "Changing the scheduled service will automatically void the original seat reservation. A new seat must be selected or automatically allocated based on the new service layout."
     },
     "child_fares": {
       "under_5": {
@@ -110,6 +113,11 @@
     "fraud": "Use of another person's ticket, presentation of a counterfeit ticket, or deliberate fare evasion may result in a penalty fare, removal from the service, and/or legal action.",
     "lost_tickets": "Digital tickets can be retrieved via the app at any time using the booking reference. Passengers are advised to screenshot their QR code before travel in case of connectivity issues.",
     "customer_service": "Passengers with queries or complaints may contact customer service via the in-app chat, email, or station help desks. Response time is within 2 business days.",
-    "dispute_resolution": "If a passenger disagrees with a refund decision, they may escalate the case to the customer service team within 14 days of the original decision."
+    "dispute_resolution": "If a passenger disagrees with a refund decision, they may escalate the case to the customer service team within 14 days of the original decision.",
+    "unaccompanied_minors": {
+      "under_12": "Children under 12 years of age are NOT permitted to travel alone on National Rail or Metro services and must be accompanied by a passenger aged 16 or over.",
+      "age_12_to_15": "Permitted to travel unaccompanied during daylight hours (06:00 to 20:00). Proof of age and emergency contact details must be carried."
+    },
+    "booking_timeout_and_lock": "When selecting a specific seat on National Rail, the seat is temporarily locked for 10 minutes. If full payment is not recorded within this window, the booking transaction times out, status transitions to 'expired', and the seat is released back to the general pool."
   }
 }

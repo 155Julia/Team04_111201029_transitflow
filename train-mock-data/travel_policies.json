@@ -146,6 +146,18 @@
       "category": "refund",
       "content": "In the event of severe weather conditions such as Typhoons or Landslides where service is officially suspended by TransitFlow, all affected single, return, and advanced bookings are eligible for a 100% full refund with zero cancellation fees, regardless of the ticket class or booking window.",
       "source_file": "travel_policies.json"
+    },
+    {
+      "title": "Electronic Device Charging and Power Outlets",
+      "category": "conduct",
+      "content": "Power outlets (110V/USB) provided inside National Rail First Class and Standard Class coaches are strictly for personal electronic devices (phones, laptops, tablets). Charging large external battery packs, medical equipment without prior authorization, or daisy-chaining multiple adapters is strictly prohibited for electrical safety.",
+      "source_file": "travel_policies.json"
+    },
+    {
+      "title": "Lost Property and Left Luggage Disposal",
+      "category": "conduct",
+      "content": "Any luggage or personal belongings left unattended at stations or inside trains will be removed by security staff. Found items are held at the central Lost Property Office for a maximum of 30 days. Unclaimed items after 30 days will be disposed of or donated to charity. A processing fee of $5.00 applies when retrieving verified lost property.",
+      "source_file": "travel_policies.json"
     }
   ]
 }
