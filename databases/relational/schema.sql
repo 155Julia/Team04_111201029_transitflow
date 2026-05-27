@@ -76,21 +76,43 @@ CREATE TABLE IF NOT EXISTS national_rail_seat_layouts (
     PRIMARY KEY (schedule_id, coach, seat_id)
 );
 
--- 6. 註冊用戶表
-CREATE TABLE IF NOT EXISTS registered_users (
-    user_id VARCHAR(10) PRIMARY KEY,
-    full_name VARCHAR(100) NOT NULL,
-    first_name VARCHAR(50),
-    surname VARCHAR(50),
-    email VARCHAR(150) UNIQUE NOT NULL,
-    password VARCHAR(255) NOT NULL,
-    phone VARCHAR(30),
+-- -- 6. 註冊用戶表
+-- CREATE TABLE IF NOT EXISTS registered_users (
+--     user_id VARCHAR(10) PRIMARY KEY,
+--     full_name VARCHAR(100) NOT NULL,
+--     first_name VARCHAR(50),
+--     surname VARCHAR(50),
+--     email VARCHAR(150) UNIQUE NOT NULL,
+--     password VARCHAR(255) NOT NULL,
+--     phone VARCHAR(30),
+--     date_of_birth DATE,
+--     secret_question VARCHAR(255),
+--     secret_answer VARCHAR(255),
+--     registered_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+--     is_active BOOLEAN DEFAULT TRUE
+-- );
+
+-- 1. 修改後的使用者基本資料表（移除 password 欄位）
+CREATE TABLE registered_users (
+    user_id VARCHAR(50) PRIMARY KEY,
+    full_name VARCHAR(100),
+    email VARCHAR(100) UNIQUE,
+    phone VARCHAR(50),
     date_of_birth DATE,
-    secret_question VARCHAR(255),
-    secret_answer VARCHAR(255),
-    registered_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    secret_question TEXT,
+    secret_answer TEXT,
+    registered_at TIMESTAMP DEFAULT NOW(),
     is_active BOOLEAN DEFAULT TRUE
 );
+
+-- 2. 新增的密碼憑證專用表（與使用者是一對一關係）
+CREATE TABLE user_credentials (
+    user_id VARCHAR(50) PRIMARY KEY REFERENCES registered_users(user_id) ON DELETE CASCADE,
+    password_salt VARCHAR(64) NOT NULL, -- 儲存隨機產生的鹽
+    password_hash VARCHAR(128) NOT NULL, -- 儲存 Salt + 密碼 Hash 後的結果
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
 
 -- 7. 國鐵訂票表
 CREATE TABLE IF NOT EXISTS bookings (
