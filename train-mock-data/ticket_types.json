@@ -28,7 +28,9 @@
       "change_fee_usd": 1.00,
       "change_deadline": "At least 24 hours before scheduled departure",
       "refundable": true,
-      "refund_rule": "RF001 (normal service), RF002 (express service)"
+      "refund_rule": "RF001 (normal service), RF002 (express service)",
+      "missed_train_policy": "If a passenger misses their scheduled service, the ticket expires immediately and cannot be used on a subsequent train. A new ticket must be purchased.",
+      "overnight_travel": "For journeys scheduled to arrive on the next calendar day, the ticket remains valid until the passenger taps out at the destination station."
     }
   },
   {
@@ -71,7 +73,9 @@
       "transferable": false,
       "refundable": true,
       "refund_rule": "RF004",
-      "notes": "A day pass offers better value than individual single tickets for passengers making 3 or more metro trips in a day. Tap in and out normally at each station."
+      "notes": "A day pass offers better value than individual single tickets for passengers making 3 or more metro trips in a day. Tap in and out normally at each station.",
+      "extended_hours_validity": "If a passenger taps in before 23:59 on the travel date, the day pass remains valid for tap-out until 01:30 AM of the following day to accommodate late-night metro services.",
+      "refund_restriction": "Strictly non-refundable once the first tap-in has been recorded anywhere on the network."
     }
   }
 ]
