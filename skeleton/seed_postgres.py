@@ -13,6 +13,7 @@ import json
 import os
 import sys
 
+import bcrypt
 import psycopg2
 from psycopg2.extras import Json, execute_values
 
@@ -237,6 +238,11 @@ def seed_users(cur):
         name_parts = user["full_name"].split(maxsplit=1)
         first_name = name_parts[0]
         surname = name_parts[1] if len(name_parts) > 1 else ""
+        # Hash the plain-text password from mock data using bcrypt
+        # so the database never stores plain text, matching register_user()
+        hashed_pw = bcrypt.hashpw(
+            user["password"].encode(), bcrypt.gensalt()
+        ).decode()
         rows.append(
             (
                 user["user_id"],
@@ -244,7 +250,7 @@ def seed_users(cur):
                 first_name,
                 surname,
                 user["email"],
-                user["password"],
+                hashed_pw,
                 user.get("phone"),
                 user.get("date_of_birth"),
                 user.get("secret_question"),
@@ -411,6 +417,37 @@ def seed_feedback(cur):
     print(f"  feedback: {n} rows")
 
 
+# TASK 6 EXTENSION: Loyalty Points System
+def seed_loyalty_points(cur):
+    """
+    Seed initial loyalty points for all completed bookings in the mock data.
+
+    Earn rate: 10 points per USD spent.  Only 'completed' bookings are
+    seeded — confirmed and cancelled bookings do not earn points at seed
+    time.  ON CONFLICT DO NOTHING on the unique index (source_booking_id)
+    makes this safe to re-run without creating duplicate ledger entries.
+    """
+    data = load("bookings.json")
+    rows = []
+    for booking in data:
+        if booking["status"] != "completed":
+            continue
+        points = round(float(booking["amount_usd"]) * 10, 2)
+        rows.append((
+            booking["user_id"],
+            booking["booking_id"],
+            points,
+            f"Points earned for booking {booking['booking_id']}",
+        ))
+    n = insert_many(
+        cur,
+        "loyalty_points",
+        ["user_id", "source_booking_id", "points_earned", "description"],
+        rows,
+    )
+    print(f"  loyalty_points: {n} rows")
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -431,6 +468,7 @@ def main():
         seed_metro_travels(cur)
         seed_payments(cur)
         seed_feedback(cur)
+        seed_loyalty_points(cur)  # TASK 6 EXTENSION
         conn.commit()
         print("\nAll done. Database seeded successfully.")
     except Exception as e:

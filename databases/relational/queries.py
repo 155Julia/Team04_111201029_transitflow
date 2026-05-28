@@ -29,10 +29,29 @@ from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
+import bcrypt
 import psycopg2
 import psycopg2.extras
 
 from skeleton.config import PG_DSN, VECTOR_TOP_K, VECTOR_SIMILARITY_THRESHOLD
+
+
+# ── Password helpers ──────────────────────────────────────────────────────────
+
+def _hash_password(plain: str) -> str:
+    """Return a bcrypt hash of the plain-text password.
+
+    bcrypt is used because it is adaptive (cost factor can be increased
+    over time) and includes a random salt automatically, making rainbow-
+    table attacks infeasible.  The result is a 60-character string safe
+    to store in VARCHAR(255).
+    """
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
+
+
+def _check_password(plain: str, hashed: str) -> bool:
+    """Return True when plain matches the stored bcrypt hash."""
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
 def _connect():
@@ -845,8 +864,8 @@ def register_user(
     Register a new user.
     Returns (True, user_id) on success or (False, error_message) on failure.
 
-    NOTE: passwords are stored as plain text here intentionally for teaching
-    purposes. In production, replace with a salted hash (e.g. bcrypt).
+    Password is hashed with bcrypt before storage — plain text is never
+    written to the database.  Duplicate emails are rejected gracefully.
     """
     email = email.strip().lower()
     first_name = first_name.strip()
@@ -858,6 +877,7 @@ def register_user(
     conn.autocommit = False
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # Reject duplicate emails before attempting the insert
             cur.execute("SELECT 1 FROM registered_users WHERE lower(email) = lower(%s)", (email,))
             if cur.fetchone():
                 conn.rollback()
@@ -866,6 +886,10 @@ def register_user(
             user_id = _new_user_id(cur)
             full_name = f"{first_name} {surname}"
             date_of_birth = f"{int(year_of_birth):04d}-01-01"
+
+            # Hash the password with bcrypt — never store plain text
+            hashed_pw = _hash_password(password)
+
             cur.execute(
                 """
                 INSERT INTO registered_users (
@@ -881,7 +905,7 @@ def register_user(
                     first_name,
                     surname,
                     email,
-                    password,
+                    hashed_pw,
                     date_of_birth,
                     secret_question,
                     secret_answer,
@@ -899,21 +923,33 @@ def register_user(
 
 def login_user(email: str, password: str) -> Optional[dict]:
     """
-    Verify credentials. Returns a user dict on success or None on failure.
+    Verify credentials using bcrypt.
+    Returns a user dict on success or None on failure.
     Dict keys: user_id, email, full_name, first_name, surname, phone, date_of_birth, is_active.
+
+    bcrypt.checkpw() is used so the comparison is always done against
+    the stored hash — the plain-text password is never logged or stored.
     """
     sql = """
-        SELECT user_id, email, full_name, first_name, surname, phone, date_of_birth, is_active
+        SELECT user_id, email, full_name, first_name, surname,
+               phone, date_of_birth, is_active, password AS pw_hash
         FROM registered_users
         WHERE lower(email) = lower(%s)
-          AND password = %s
           AND is_active = TRUE
     """
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(sql, (email.strip(), password))
+            cur.execute(sql, (email.strip(),))
             row = cur.fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            # Verify the supplied password against the stored bcrypt hash
+            if not _check_password(password, row["pw_hash"]):
+                return None
+            # Return user dict without exposing the hash
+            result = dict(row)
+            result.pop("pw_hash", None)
+            return result
 
 
 def get_user_secret_question(email: str) -> Optional[str]:
@@ -947,7 +983,9 @@ def verify_secret_answer(email: str, answer: str) -> bool:
 
 
 def update_password(email: str, new_password: str) -> bool:
-    """Update the password for a user. Returns True if the row was updated."""
+    """Update the password for a user with a fresh bcrypt hash.
+    Returns True if the row was updated."""
+    hashed_pw = _hash_password(new_password)
     sql = """
         UPDATE registered_users
         SET password = %s
@@ -956,8 +994,156 @@ def update_password(email: str, new_password: str) -> bool:
     """
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (new_password, email.strip()))
+            cur.execute(sql, (hashed_pw, email.strip()))
             return cur.rowcount > 0
+
+
+# TASK 6 EXTENSION: Loyalty Points System
+# ── LOYALTY POINTS QUERIES ────────────────────────────────────────────────────
+
+def query_loyalty_balance(user_id: str) -> dict:
+    """
+    Return the total loyalty points balance for a user.
+
+    Points are earned at a rate of 10 per USD spent on completed
+    national-rail bookings.  This function sums all rows in the
+    loyalty_points ledger for the given user.
+
+    Args:
+        user_id: e.g. "RU01"
+
+    Returns:
+        dict with user_id, total_points (Decimal), and transaction_count (int).
+        Returns zero balance (not None) when the user has no points.
+    """
+    sql = """
+        SELECT
+            %s                              AS user_id,
+            COALESCE(SUM(points_earned), 0) AS total_points,
+            COUNT(*)                        AS transaction_count
+        FROM loyalty_points
+        WHERE user_id = %s
+    """
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, (user_id, user_id))
+            return dict(cur.fetchone())
+
+
+def query_loyalty_history(user_id: str) -> list[dict]:
+    """
+    Return the full loyalty-points earn history for a user, newest first.
+
+    Joins to bookings so the caller can display the route and travel date
+    alongside the points earned.
+
+    Args:
+        user_id: e.g. "RU01"
+
+    Returns:
+        List of dicts ordered by earned_at DESC.  Empty list for unknown user.
+    """
+    sql = """
+        SELECT
+            lp.id,
+            lp.user_id,
+            lp.source_booking_id,
+            lp.points_earned,
+            lp.description,
+            lp.earned_at,
+            b.travel_date,
+            b.amount_usd          AS booking_amount_usd,
+            b.fare_class,
+            orig.name             AS origin_name,
+            dest.name             AS destination_name
+        FROM loyalty_points lp
+        JOIN bookings b
+            ON b.booking_id = lp.source_booking_id
+        JOIN national_rail_stations orig
+            ON orig.station_id = b.origin_station_id
+        JOIN national_rail_stations dest
+            ON dest.station_id = b.destination_station_id
+        WHERE lp.user_id = %s
+        ORDER BY lp.earned_at DESC
+    """
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, (user_id,))
+            return [dict(row) for row in cur.fetchall()]
+
+
+def execute_earn_loyalty_points(booking_id: str) -> tuple[bool, dict | str]:
+    """
+    Credit loyalty points for a completed booking.
+
+    Earn rate: 10 points per USD of the booking amount, rounded to 2 dp.
+    The unique index on source_booking_id prevents double-crediting if
+    this function is called more than once for the same booking.
+
+    This is an atomic write: the INSERT either succeeds fully or rolls back.
+
+    Args:
+        booking_id: e.g. "BK001" — must exist and have status 'completed' or 'confirmed'.
+
+    Returns:
+        (True, result_dict)  with user_id, points_earned, total_points
+        (False, error_msg)   if booking not found, already credited, or wrong status
+    """
+    conn = psycopg2.connect(PG_DSN)
+    conn.autocommit = False
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT booking_id, user_id, amount_usd, status FROM bookings WHERE booking_id = %s",
+                (booking_id,),
+            )
+            booking = cur.fetchone()
+            if not booking:
+                conn.rollback()
+                return False, f"Booking {booking_id} not found."
+            if booking["status"] == "cancelled":
+                conn.rollback()
+                return False, "Cancelled bookings do not earn loyalty points."
+
+            cur.execute(
+                "SELECT 1 FROM loyalty_points WHERE source_booking_id = %s",
+                (booking_id,),
+            )
+            if cur.fetchone():
+                conn.rollback()
+                return False, f"Points already credited for booking {booking_id}."
+
+            # Calculate points: 10 per USD, rounded to 2 decimal places
+            points = _money(Decimal(str(booking["amount_usd"])) * 10)
+
+            cur.execute(
+                """
+                INSERT INTO loyalty_points
+                    (user_id, source_booking_id, points_earned, description)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, user_id, points_earned, earned_at
+                """,
+                (
+                    booking["user_id"],
+                    booking_id,
+                    points,
+                    f"Points earned for booking {booking_id}",
+                ),
+            )
+            row = dict(cur.fetchone())
+
+            cur.execute(
+                "SELECT COALESCE(SUM(points_earned), 0) AS total FROM loyalty_points WHERE user_id = %s",
+                (booking["user_id"],),
+            )
+            total = cur.fetchone()["total"]
+            conn.commit()
+            return True, {**row, "total_points": total}
+    except Exception as exc:
+        conn.rollback()
+        return False, str(exc)
+    finally:
+        conn.close()
 
 
 # ── VECTOR / RAG QUERIES — do not modify ─────────────────────────────────────
