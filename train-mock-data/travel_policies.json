@@ -158,6 +158,36 @@
       "category": "conduct",
       "content": "Any luggage or personal belongings left unattended at stations or inside trains will be removed by security staff. Found items are held at the central Lost Property Office for a maximum of 30 days. Unclaimed items after 30 days will be disposed of or donated to charity. A processing fee of $5.00 applies when retrieving verified lost property.",
       "source_file": "travel_policies.json"
+    },
+    {
+      "title": "Electronic Device and Short Video Audio Policy",
+      "category": "conduct",
+      "content": "To maintain a peaceful travel environment, passengers watching short videos (e.g., TikTok, Instagram Reels), playing mobile games, or making video calls must use headphones. Playing audio through external speakers is strictly prohibited on all Metro trains and National Rail coaches. Violators who refuse to comply after a warning from staff will face a standard fine of 50 USD and may be escorted off the train.",
+      "source_file": "travel_policies.json"
+    },
+    {
+      "title": "Priority Seat Dispute Mediation Clause",
+      "category": "conduct",
+      "content": "Priority seats are designed for those with invisible needs as well as visible physical challenges. Passengers are requested not to demand or force another passenger to vacate a priority seat based solely on perceived age or appearance. In case of disputes, station staff or train conductors retain the final authority to assign seating or relocate passengers to alternative rows to ensure mutual respect.",
+      "source_file": "travel_policies.json"
+    },
+    {
+      "title": "Lost and Found Retrieval and Storage Policy",
+      "category": "booking",
+      "content": "Items left behind on Metro trains or National Rail coaches will be sent to the Central Square Station Lost and Found Office. Perishable items (such as fresh food or drinks) will be disposed of after 24 hours for hygiene reasons. Standard items (such as electronics, wallets, and umbrellas) will be stored securely for up to 30 days. A handling fee of 5 USD is required upon verification and collection of any recovered item.",
+      "source_file": "travel_policies.json"
+    },
+    {
+      "title": "Power Bank and Portable Charging Safety Policy",
+      "category": "conduct",
+      "content": "For fire safety prevention, passengers may only charge personal devices using certified power banks (e.g., CE, FCC, or UL markings). Power banks exceeding 20,000mAh capacity are prohibited from being used or carried on board. If a portable charger shows signs of swelling, extreme heat, or emitting smoke, the passenger must immediately notify train staff. Unauthorized high-wattage charging from train wall sockets is strictly restricted to laptops and mobile phones only.",
+      "source_file": "travel_policies.json"
+    },
+    {
+      "title": "AI Wearable Devices and Voice Assistant Etiquette",
+      "category": "conduct",
+      "content": "While using AI smart glasses, smart watches, or voice assistants (e.g., Siri, Gemini, ChatGPT Voice) on transit property, passengers must keep their voice level conversational and non-disruptive. Loudly repeating continuous voice commands or conducting prolonged voice-to-text dictation without a microphone headset is treated as a noise disturbance. Passengers violating this policy in designated National Rail Quiet Zones will be asked to relocate to standard coaches.",
+      "source_file": "travel_policies.json"
     }
   ]
 }
