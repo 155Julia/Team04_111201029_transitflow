@@ -7,7 +7,7 @@ GRAPH SCHEMA
 ------------
 Node labels:
   :MetroStation          {station_id, name, lines}
-  :NationalRailStation   {rail_station_id, name, lines}
+  :NationalRailStation   {station_id, rail_station_id, name, lines}
 
 Relationship types:
   [:METRO_LINK]          {line, travel_time_min}   metro adjacency

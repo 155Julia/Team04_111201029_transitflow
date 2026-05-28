@@ -474,7 +474,7 @@ def query_user_bookings(user_email: str) -> dict:
         JOIN national_rail_schedules s ON s.schedule_id = b.schedule_id
         JOIN national_rail_stations orig ON orig.station_id = b.origin_station_id
         JOIN national_rail_stations dest ON dest.station_id = b.destination_station_id
-        LEFT JOIN payments p ON p.booking_id = b.booking_id
+        LEFT JOIN payments p ON p.national_rail_booking_id = b.booking_id
         WHERE lower(u.email) = lower(%s)
         ORDER BY b.travel_date DESC, b.departure_time DESC, b.booking_id DESC
     """
@@ -502,7 +502,7 @@ def query_user_bookings(user_email: str) -> dict:
         JOIN metro_schedules s ON s.schedule_id = t.schedule_id
         JOIN metro_stations orig ON orig.station_id = t.origin_station_id
         JOIN metro_stations dest ON dest.station_id = t.destination_station_id
-        LEFT JOIN payments p ON p.booking_id = t.trip_id
+        LEFT JOIN payments p ON p.metro_trip_id = t.trip_id
         WHERE lower(u.email) = lower(%s)
         ORDER BY t.travel_date DESC, t.purchased_at DESC, t.trip_id DESC
     """
@@ -518,15 +518,24 @@ def query_user_bookings(user_email: str) -> dict:
 def query_payment_info(booking_id: str) -> Optional[dict]:
     """Return payment record for a booking or metro trip."""
     sql = """
-        SELECT payment_id, booking_id, amount_usd, method, status, paid_at
+        SELECT
+            payment_id,
+            COALESCE(national_rail_booking_id, metro_trip_id) AS booking_id,
+            national_rail_booking_id,
+            metro_trip_id,
+            amount_usd,
+            method,
+            status,
+            paid_at
         FROM payments
-        WHERE booking_id = %s
+        WHERE national_rail_booking_id = %s
+           OR metro_trip_id = %s
         ORDER BY paid_at DESC
         LIMIT 1
     """
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(sql, (booking_id,))
+            cur.execute(sql, (booking_id, booking_id))
             row = cur.fetchone()
             return dict(row) if row else None
 
@@ -723,7 +732,7 @@ def execute_booking(
 
             cur.execute(
                 """
-                INSERT INTO payments (payment_id, booking_id, amount_usd, method, status)
+                INSERT INTO payments (payment_id, national_rail_booking_id, amount_usd, method, status)
                 VALUES (%s, %s, %s, 'credit_card', 'paid')
                 RETURNING payment_id, status
                 """,
@@ -770,7 +779,7 @@ def execute_cancellation(booking_id: str, user_id: str) -> tuple[bool, dict | st
                     p.status AS payment_status
                 FROM national_rail_bookings b
                 JOIN national_rail_schedules s ON s.schedule_id = b.schedule_id
-                LEFT JOIN payments p ON p.booking_id = b.booking_id
+                LEFT JOIN payments p ON p.national_rail_booking_id = b.booking_id
                 WHERE b.booking_id = %s
                   AND b.user_id = %s
                 FOR UPDATE OF b

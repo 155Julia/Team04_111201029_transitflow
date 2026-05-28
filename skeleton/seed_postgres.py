@@ -418,7 +418,8 @@ def seed_payments(cur):
     rows = [
         (
             payment["payment_id"],
-            payment["booking_id"],
+            payment["booking_id"] if payment["booking_id"].startswith("BK") else None,
+            payment["booking_id"] if payment["booking_id"].startswith("MT") else None,
             payment["amount_usd"],
             payment["method"],
             payment["status"],
@@ -429,7 +430,15 @@ def seed_payments(cur):
     n = insert_many(
         cur,
         "payments",
-        ["payment_id", "booking_id", "amount_usd", "method", "status", "paid_at"],
+        [
+            "payment_id",
+            "national_rail_booking_id",
+            "metro_trip_id",
+            "amount_usd",
+            "method",
+            "status",
+            "paid_at",
+        ],
         rows,
     )
     print(f"  payments: {n} rows")
@@ -440,7 +449,8 @@ def seed_feedback(cur):
     rows = [
         (
             feedback["feedback_id"],
-            feedback["booking_id"],
+            feedback["booking_id"] if feedback["booking_id"].startswith("BK") else None,
+            feedback["booking_id"] if feedback["booking_id"].startswith("MT") else None,
             feedback["user_id"],
             feedback["rating"],
             feedback.get("comment"),
@@ -451,7 +461,15 @@ def seed_feedback(cur):
     n = insert_many(
         cur,
         "feedback",
-        ["feedback_id", "booking_id", "user_id", "rating", "comment", "submitted_at"],
+        [
+            "feedback_id",
+            "national_rail_booking_id",
+            "metro_trip_id",
+            "user_id",
+            "rating",
+            "comment",
+            "submitted_at",
+        ],
         rows,
     )
     print(f"  feedback: {n} rows")

@@ -205,28 +205,35 @@ CREATE TABLE IF NOT EXISTS metro_travel_history (
 );
 
 -- 11. Payments
---    booking_id is intentionally NOT a FK because it can reference
---    either national_rail_bookings.booking_id (BK-...) or metro_travel_history.trip_id (MT...).
---    This polymorphic pattern avoids a union-table or nullable FK pair.
+--    Exactly one journey reference must be present.  Splitting the
+--    references keeps both paths protected by real foreign keys.
 CREATE TABLE IF NOT EXISTS payments (
-    payment_id  VARCHAR(20)  PRIMARY KEY,
-    booking_id  VARCHAR(20)  NOT NULL,   -- polymorphic: BK-... or MT...
-    amount_usd  NUMERIC(6,2) NOT NULL,
-    method      VARCHAR(20)  NOT NULL CHECK (method IN ('credit_card','debit_card','ewallet')),
-    status      VARCHAR(20)  NOT NULL CHECK (status IN ('paid','refunded')),
-    paid_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    payment_id               VARCHAR(20)  PRIMARY KEY,
+    national_rail_booking_id VARCHAR(20)
+        REFERENCES national_rail_bookings(booking_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    metro_trip_id            VARCHAR(20)
+        REFERENCES metro_travel_history(trip_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    amount_usd               NUMERIC(6,2) NOT NULL,
+    method                   VARCHAR(20)  NOT NULL CHECK (method IN ('credit_card','debit_card','ewallet')),
+    status                   VARCHAR(20)  NOT NULL CHECK (status IN ('paid','refunded')),
+    paid_at                  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CHECK (num_nonnulls(national_rail_booking_id, metro_trip_id) = 1)
 );
 
 -- 12. Feedback
---     Same polymorphic booking_id pattern as payments.
+--     Same explicit-reference pattern as payments.
 CREATE TABLE IF NOT EXISTS feedback (
-    feedback_id  VARCHAR(20)  PRIMARY KEY,
-    booking_id   VARCHAR(20)  NOT NULL,  -- polymorphic: BK-... or MT...
-    user_id      VARCHAR(20)
+    feedback_id              VARCHAR(20)  PRIMARY KEY,
+    national_rail_booking_id VARCHAR(20)
+        REFERENCES national_rail_bookings(booking_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    metro_trip_id            VARCHAR(20)
+        REFERENCES metro_travel_history(trip_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    user_id                  VARCHAR(20)
         REFERENCES registered_users(user_id) ON DELETE SET NULL ON UPDATE CASCADE,
-    rating       INT          NOT NULL CHECK (rating BETWEEN 1 AND 5),
-    comment      TEXT,
-    submitted_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    rating                   INT          NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    comment                  TEXT,
+    submitted_at             TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    CHECK (num_nonnulls(national_rail_booking_id, metro_trip_id) = 1)
 );
 
 -- ── Indexes ──────────────────────────────────────────────────────────────────
@@ -240,14 +247,26 @@ CREATE INDEX IF NOT EXISTS idx_bookings_schedule_date
     ON national_rail_bookings(schedule_id, travel_date)
     WHERE status <> 'cancelled';
 
+-- Prevents two active bookings from claiming the same physical seat
+-- on the same service date, even under concurrent booking attempts.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_nr_active_seat_booking_unique
+    ON national_rail_bookings(schedule_id, travel_date, coach, seat_id)
+    WHERE status <> 'cancelled' AND seat_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_metro_travel_user_date
     ON metro_travel_history(user_id, travel_date DESC);
 
-CREATE INDEX IF NOT EXISTS idx_payments_booking_id
-    ON payments(booking_id);
+CREATE INDEX IF NOT EXISTS idx_payments_nr_booking_id
+    ON payments(national_rail_booking_id);
 
-CREATE INDEX IF NOT EXISTS idx_feedback_booking_id
-    ON feedback(booking_id);
+CREATE INDEX IF NOT EXISTS idx_payments_metro_trip_id
+    ON payments(metro_trip_id);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_nr_booking_id
+    ON feedback(national_rail_booking_id);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_metro_trip_id
+    ON feedback(metro_trip_id);
 
 -- ============================================================
 --  TASK 6 EXTENSION: Loyalty Points System

@@ -14,6 +14,9 @@ CREATE CONSTRAINT IF NOT EXISTS FOR (m:MetroStation)
 CREATE CONSTRAINT IF NOT EXISTS FOR (r:NationalRailStation)
     REQUIRE r.rail_station_id IS UNIQUE;
 
+CREATE CONSTRAINT IF NOT EXISTS FOR (r:NationalRailStation)
+    REQUIRE r.station_id IS UNIQUE;
+
 // ── Node labels and properties ───────────────────────────────────────────────
 //
 //  :MetroStation
@@ -22,7 +25,8 @@ CREATE CONSTRAINT IF NOT EXISTS FOR (r:NationalRailStation)
 //      lines           List    e.g. ["M1", "M2"]
 //
 //  :NationalRailStation
-//      rail_station_id String  e.g. "NR01"   (unique key)
+//      station_id      String  e.g. "NR01"   (unique key used by queries)
+//      rail_station_id String  e.g. "NR01"   (legacy alias kept for compatibility)
 //      name            String  e.g. "Central Station"
 //      lines           List    e.g. ["NR1", "NR2"]
 

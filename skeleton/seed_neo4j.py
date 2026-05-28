@@ -32,6 +32,10 @@ def seed_neo4j():
             "CREATE CONSTRAINT IF NOT EXISTS FOR (r:NationalRailStation) "
             "REQUIRE r.rail_station_id IS UNIQUE"
         )
+        session.run(
+            "CREATE CONSTRAINT IF NOT EXISTS FOR (r:NationalRailStation) "
+            "REQUIRE r.station_id IS UNIQUE"
+        )
 
         # ── MetroStation nodes ────────────────────────────────────────────────
         # MERGE ensures re-running does not create duplicate nodes
@@ -49,7 +53,7 @@ def seed_neo4j():
         for station in rail_stations:
             session.run(
                 "MERGE (r:NationalRailStation {rail_station_id: $sid}) "
-                "SET r.name = $name, r.lines = $lines",
+                "SET r.station_id = $sid, r.name = $name, r.lines = $lines",
                 sid=station["station_id"],
                 name=station["name"],
                 lines=station["lines"],
