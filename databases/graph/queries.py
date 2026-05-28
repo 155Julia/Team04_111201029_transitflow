@@ -30,6 +30,16 @@ def _driver():
     return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
 
+def _route_relationship_pattern(network: str, include_interchange: bool = True) -> str:
+    """Return a safe relationship-type pattern for route searches."""
+    network = (network or "auto").lower()
+    if network == "metro":
+        return "METRO_LINK"
+    if network in {"rail", "national_rail", "national"}:
+        return "RAIL_LINK"
+    return "METRO_LINK|RAIL_LINK|INTERCHANGE_TO" if include_interchange else "METRO_LINK|RAIL_LINK"
+
+
 # ── FASTEST ROUTE (shortest path by travel_time_min) ─────────────────────────
 
 def query_shortest_route(
@@ -40,9 +50,8 @@ def query_shortest_route(
     """
     Find the fastest path between two stations, minimising total travel time.
 
-    Uses Neo4j shortestPath over METRO_LINK, RAIL_LINK, and INTERCHANGE_TO edges.
-    Edge weights (travel_time_min) are summed via reduce(); INTERCHANGE_TO edges
-    contribute a fixed 5-minute transfer penalty.
+    Enumerates simple paths and orders them by summed relationship weight.
+    This gives weighted shortest-path behaviour without requiring APOC.
 
     Args:
         origin_id:       e.g. "MS01" or "NR01"
@@ -53,14 +62,16 @@ def query_shortest_route(
         dict with keys: found, origin_id, destination_id,
                         total_time_min (int), path (list of station dicts), legs (int)
     """
-    query = """
+    rel_pattern = _route_relationship_pattern(network)
+    query = f"""
     // Match origin and destination nodes across both networks
     MATCH (start), (end)
     WHERE (start.station_id = $start OR start.rail_station_id = $start)
       AND (end.station_id = $end   OR end.rail_station_id = $end)
 
-    // Find the topologically shortest path (fewest hops)
-    MATCH p = shortestPath((start)-[:METRO_LINK|RAIL_LINK|INTERCHANGE_TO*]-(end))
+    // Enumerate simple paths, then rank by actual travel-time weight.
+    MATCH p = (start)-[:{rel_pattern}*..40]-(end)
+    WHERE ALL(n IN nodes(p) WHERE single(m IN nodes(p) WHERE m = n))
 
     // Sum actual travel time: INTERCHANGE_TO = 5 min penalty, others use stored weight
     WITH p,
@@ -127,18 +138,20 @@ def query_cheapest_route(
         fare_class:      "standard" or "first" — affects national rail cost only
 
     Returns:
-        dict with found, total_fare_usd (float), stations (list), legs (int)
+        dict with found, path (list), total_fare_usd (float), stations (list), legs (int)
     """
     # Per-stop rate for national rail depends on fare_class
     nr_rate = 2.50 if fare_class == "first" else 1.50
 
-    query = """
+    rel_pattern = _route_relationship_pattern(network)
+    query = f"""
     MATCH (start), (end)
     WHERE (start.station_id = $start OR start.rail_station_id = $start)
       AND (end.station_id = $end   OR end.rail_station_id = $end)
 
-    // shortestPath gives the topologically shortest path as a starting candidate
-    MATCH p = shortestPath((start)-[:METRO_LINK|RAIL_LINK|INTERCHANGE_TO*]-(end))
+    // Enumerate simple paths, then rank by fare weight so fare_class can affect the result.
+    MATCH p = (start)-[:{rel_pattern}*..40]-(end)
+    WHERE ALL(n IN nodes(p) WHERE single(m IN nodes(p) WHERE m = n))
 
     // Accumulate fare: metro $0.30/stop, NR varies by fare_class, interchange free
     WITH p,
@@ -152,9 +165,13 @@ def query_cheapest_route(
          ) AS total_fare_usd
 
     RETURN
-        [n IN nodes(p) | coalesce(n.name, 'Unknown')]                    AS stations,
-        [n IN nodes(p) | coalesce(n.station_id, n.rail_station_id)]      AS ids,
-        round(total_fare_usd * 100) / 100                                AS total_fare_usd
+        [n IN nodes(p) | {
+            station_id: coalesce(n.station_id, n.rail_station_id),
+            name:       n.name,
+            lines:      n.lines
+        }] AS path,
+        [n IN nodes(p) | coalesce(n.name, 'Unknown')] AS stations,
+        round(total_fare_usd * 100) / 100             AS total_fare_usd
     ORDER BY total_fare_usd ASC
     LIMIT 1
     """
@@ -167,10 +184,17 @@ def query_cheapest_route(
                 return {
                     "found": True,
                     "total_fare_usd": float(record["total_fare_usd"]),
+                    "path": record["path"],
                     "stations": record["stations"],
-                    "legs": len(record["ids"]) - 1,
+                    "legs": len(record["path"]) - 1,
                 }
-            return {"found": False, "total_fare_usd": 0.0, "stations": [], "legs": 0}
+            return {
+                "found": False,
+                "total_fare_usd": 0.0,
+                "path": [],
+                "stations": [],
+                "legs": 0,
+            }
 
 
 # ── ALTERNATIVE ROUTES (avoiding a closed/delayed station) ───────────────────
@@ -197,17 +221,19 @@ def query_alternative_routes(
         List of routes; each route is a list of station dicts
         {station_id, name}
     """
-    query = """
+    rel_pattern = _route_relationship_pattern(network)
+    query = f"""
     MATCH (start), (end)
     WHERE (start.station_id = $start OR start.rail_station_id = $start)
       AND (end.station_id = $end   OR end.rail_station_id = $end)
 
-    // Variable-length path — no shortestPath so we can filter nodes
-    MATCH p = (start)-[:METRO_LINK|RAIL_LINK|INTERCHANGE_TO*..40]-(end)
+    // Variable-length simple path so we can filter avoided nodes.
+    MATCH p = (start)-[:{rel_pattern}*..40]-(end)
 
     // Exclude any path that passes through the avoided station
     WHERE NONE(n IN nodes(p)
                WHERE n.station_id = $avoid OR n.rail_station_id = $avoid)
+      AND ALL(n IN nodes(p) WHERE single(m IN nodes(p) WHERE m = n))
 
     WITH p, length(p) AS hops
     ORDER BY hops ASC
@@ -250,9 +276,10 @@ def query_interchange_path(origin_id: str, destination_id: str) -> dict:
     WHERE (start.station_id = $start OR start.rail_station_id = $start)
       AND (end.station_id = $end   OR end.rail_station_id = $end)
 
-    // Require the path to cross at least one INTERCHANGE_TO edge
-    MATCH p = shortestPath((start)-[:METRO_LINK|RAIL_LINK|INTERCHANGE_TO*]-(end))
+    // Require the path to cross at least one INTERCHANGE_TO edge.
+    MATCH p = (start)-[:METRO_LINK|RAIL_LINK|INTERCHANGE_TO*..40]-(end)
     WHERE ANY(r IN relationships(p) WHERE type(r) = 'INTERCHANGE_TO')
+      AND ALL(n IN nodes(p) WHERE single(m IN nodes(p) WHERE m = n))
 
     // Sum travel time including 5-min interchange penalty
     WITH p,
@@ -264,6 +291,11 @@ def query_interchange_path(origin_id: str, destination_id: str) -> dict:
          ) AS total_time_min
 
     RETURN
+        [n IN nodes(p) | {
+            station_id: coalesce(n.station_id, n.rail_station_id),
+            name:       n.name,
+            lines:      n.lines
+        }] AS path,
         [n IN nodes(p) | coalesce(n.name, 'Unknown')]                AS stations,
         [n IN nodes(p) | coalesce(n.station_id, n.rail_station_id)]  AS ids,
         total_time_min
@@ -282,12 +314,14 @@ def query_interchange_path(origin_id: str, destination_id: str) -> dict:
                 ]
                 return {
                     "found": True,
+                    "path": record["path"],
                     "stations": record["stations"],
                     "interchange_points": list(set(interchanges)),
                     "total_time_min": record["total_time_min"],
                 }
             return {
                 "found": False,
+                "path": [],
                 "stations": [],
                 "interchange_points": [],
                 "total_time_min": 0,
@@ -309,6 +343,22 @@ def query_delay_ripple(delayed_station_id: str, hops: int = 2) -> list[dict]:
         List of dicts: {station_id, name, hops_away, lines_affected}
         Ordered by hops_away ascending.
     """
+    hops = max(int(hops), 0)
+    if hops == 0:
+        query = """
+        MATCH (center)
+        WHERE center.station_id = $broken_id OR center.rail_station_id = $broken_id
+        RETURN
+            coalesce(center.station_id, center.rail_station_id) AS station_id,
+            center.name                                         AS name,
+            0                                                   AS hops_away,
+            center.lines                                        AS lines_affected
+        """
+        with _driver() as driver:
+            with driver.session() as session:
+                result = session.run(query, broken_id=delayed_station_id)
+                return [dict(rec) for rec in result]
+
     # Build query with literal hop count (Cypher requires literal for range upper bound)
     query = f"""
     MATCH (center)

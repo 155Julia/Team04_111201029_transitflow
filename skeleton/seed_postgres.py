@@ -7,6 +7,7 @@ Usage:
 Run AFTER docker-compose up -d.
 You must first design and create your tables in databases/relational/schema.sql.
 Safe to re-run: implement your inserts with ON CONFLICT DO NOTHING.
+TASK 6 EXTENSION: seeds loyalty_points from completed national rail bookings.
 """
 
 import json
@@ -15,7 +16,7 @@ import sys
 
 import bcrypt
 import psycopg2
-from psycopg2.extras import Json, execute_values
+from psycopg2.extras import execute_values
 
 # ── resolve paths ────────────────────────────────────────────────────────────
 SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
@@ -24,6 +25,9 @@ DATA_DIR    = os.path.join(PROJECT_DIR, "train-mock-data")
 
 sys.path.insert(0, PROJECT_DIR)
 from skeleton import config as cfg
+
+
+# TASK 6 EXTENSION: seed_loyalty_points loads the loyalty_points ledger.
 
 
 def load(filename):
@@ -114,10 +118,8 @@ def seed_metro_schedules(cur):
             schedule["direction"],
             schedule["origin_station_id"],
             schedule["destination_station_id"],
-            schedule["stops_in_order"],
             schedule["first_train_time"],
             schedule["last_train_time"],
-            Json(schedule["travel_time_from_origin_min"]),
             schedule["base_fare_usd"],
             schedule["per_stop_rate_usd"],
             schedule["frequency_min"],
@@ -134,10 +136,8 @@ def seed_metro_schedules(cur):
             "direction",
             "origin_station_id",
             "destination_station_id",
-            "stops_in_order",
             "first_train_time",
             "last_train_time",
-            "travel_time_from_origin_min",
             "base_fare_usd",
             "per_stop_rate_usd",
             "frequency_min",
@@ -167,9 +167,7 @@ def seed_national_rail_schedules(cur):
                 schedule["first_train_time"],
                 schedule["last_train_time"],
                 schedule["operates_on"],
-                schedule["stops_in_order"],
                 schedule.get("passed_through_stations"),
-                Json(schedule["travel_time_from_origin_min"]),
                 standard["base_fare_usd"],
                 standard["per_stop_rate_usd"],
                 first["base_fare_usd"],
@@ -191,9 +189,7 @@ def seed_national_rail_schedules(cur):
             "first_train_time",
             "last_train_time",
             "operates_on",
-            "stops_in_order",
             "passed_through_stations",
-            "travel_time_from_origin_min",
             "standard_base_fare",
             "standard_per_stop_rate",
             "first_base_fare",
@@ -203,6 +199,50 @@ def seed_national_rail_schedules(cur):
         rows,
     )
     print(f"  national_rail_schedules: {n} rows")
+
+
+def seed_metro_schedule_stops(cur):
+    """Seed normalised metro stop sequences with one row per schedule stop."""
+    data = load("metro_schedules.json")
+    rows = []
+    for schedule in data:
+        travel_times = schedule["travel_time_from_origin_min"]
+        for idx, station_id in enumerate(schedule["stops_in_order"], start=1):
+            rows.append((
+                schedule["schedule_id"],
+                station_id,
+                idx,
+                travel_times[station_id],
+            ))
+    n = insert_many(
+        cur,
+        "metro_schedule_stops",
+        ["schedule_id", "station_id", "stop_order", "travel_time_from_origin_min"],
+        rows,
+    )
+    print(f"  metro_schedule_stops: {n} rows")
+
+
+def seed_national_rail_schedule_stops(cur):
+    """Seed normalised national rail stop sequences with one row per schedule stop."""
+    data = load("national_rail_schedules.json")
+    rows = []
+    for schedule in data:
+        travel_times = schedule["travel_time_from_origin_min"]
+        for idx, station_id in enumerate(schedule["stops_in_order"], start=1):
+            rows.append((
+                schedule["schedule_id"],
+                station_id,
+                idx,
+                travel_times[station_id],
+            ))
+    n = insert_many(
+        cur,
+        "national_rail_schedule_stops",
+        ["schedule_id", "station_id", "stop_order", "travel_time_from_origin_min"],
+        rows,
+    )
+    print(f"  national_rail_schedule_stops: {n} rows")
 
 
 def seed_seat_layouts(cur):
@@ -306,7 +346,7 @@ def seed_national_rail_bookings(cur):
     ]
     n = insert_many(
         cur,
-        "bookings",
+        "national_rail_bookings",
         [
             "booking_id",
             "user_id",
@@ -327,7 +367,7 @@ def seed_national_rail_bookings(cur):
         ],
         rows,
     )
-    print(f"  bookings: {n} rows")
+    print(f"  national_rail_bookings: {n} rows")
 
 
 def seed_metro_travels(cur):
@@ -420,10 +460,10 @@ def seed_feedback(cur):
 # TASK 6 EXTENSION: Loyalty Points System
 def seed_loyalty_points(cur):
     """
-    Seed initial loyalty points for all completed bookings in the mock data.
+    Seed initial loyalty points for all completed national_rail_bookings in the mock data.
 
-    Earn rate: 10 points per USD spent.  Only 'completed' bookings are
-    seeded — confirmed and cancelled bookings do not earn points at seed
+    Earn rate: 10 points per USD spent.  Only 'completed' national_rail_bookings are
+    seeded — confirmed and cancelled national_rail_bookings do not earn points at seed
     time.  ON CONFLICT DO NOTHING on the unique index (source_booking_id)
     makes this safe to re-run without creating duplicate ledger entries.
     """
@@ -458,10 +498,12 @@ def main():
 
     try:
         print("Seeding tables (dependency order):")
-        seed_metro_stations(cur)
         seed_national_rail_stations(cur)
+        seed_metro_stations(cur)
         seed_metro_schedules(cur)
         seed_national_rail_schedules(cur)
+        seed_metro_schedule_stops(cur)
+        seed_national_rail_schedule_stops(cur)
         seed_seat_layouts(cur)
         seed_users(cur)
         seed_national_rail_bookings(cur)

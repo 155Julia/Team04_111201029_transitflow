@@ -1,6 +1,7 @@
 -- ============================================================
 --  TransitFlow PostgreSQL Schema
 --  Seed data is loaded separately by: python skeleton/seed_postgres.py
+-- # TASK 6 EXTENSION: This schema includes the loyalty_points ledger.
 --
 --  DELETE STRATEGY (applied consistently throughout):
 --    Hard delete is used for all tables EXCEPT registered_users.
@@ -19,7 +20,15 @@
 --  STUDENT TASK — Relational tables
 -- ============================================================
 
--- 1. Metro station master data
+-- 1. National rail station master data
+CREATE TABLE IF NOT EXISTS national_rail_stations (
+    -- VARCHAR chosen to match source IDs like "NR01"
+    station_id VARCHAR(10)  PRIMARY KEY,
+    name       VARCHAR(100) NOT NULL,
+    lines      TEXT[]       NOT NULL
+);
+
+-- 2. Metro station master data
 --    adjacent_stations stores neighbour IDs for reference;
 --    the live route graph lives in Neo4j (METRO_LINK edges).
 CREATE TABLE IF NOT EXISTS metro_stations (
@@ -30,23 +39,10 @@ CREATE TABLE IF NOT EXISTS metro_stations (
     is_interchange_metro                 BOOLEAN      NOT NULL DEFAULT FALSE,
     is_interchange_national_rail         BOOLEAN      NOT NULL DEFAULT FALSE,
     -- NULL when the station has no national-rail interchange
-    interchange_national_rail_station_id VARCHAR(10),
+    interchange_national_rail_station_id VARCHAR(10)
+        REFERENCES national_rail_stations(station_id) ON DELETE SET NULL ON UPDATE CASCADE,
     adjacent_stations                    TEXT[]       -- neighbour station IDs (informational)
 );
-
--- 2. National rail station master data
-CREATE TABLE IF NOT EXISTS national_rail_stations (
-    station_id VARCHAR(10)  PRIMARY KEY,
-    name       VARCHAR(100) NOT NULL,
-    lines      TEXT[]       NOT NULL
-);
-
--- Add FK after both tables exist
-ALTER TABLE metro_stations
-    ADD CONSTRAINT IF NOT EXISTS fk_metro_interchange_nr
-    FOREIGN KEY (interchange_national_rail_station_id)
-    REFERENCES national_rail_stations(station_id)
-    ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- 3. Metro schedule — one row per line/direction
 CREATE TABLE IF NOT EXISTS metro_schedules (
@@ -57,11 +53,8 @@ CREATE TABLE IF NOT EXISTS metro_schedules (
         REFERENCES metro_stations(station_id) ON DELETE RESTRICT ON UPDATE CASCADE,
     destination_station_id       VARCHAR(10)    NOT NULL
         REFERENCES metro_stations(station_id) ON DELETE RESTRICT ON UPDATE CASCADE,
-    stops_in_order               TEXT[]         NOT NULL,
     first_train_time             TIME           NOT NULL,
     last_train_time              TIME           NOT NULL,
-    -- JSONB map of station_id -> minutes from origin, e.g. {"MS01": 0, "MS02": 3}
-    travel_time_from_origin_min  JSONB          NOT NULL,
     base_fare_usd                NUMERIC(5,2)   NOT NULL DEFAULT 0.80,
     per_stop_rate_usd            NUMERIC(5,2)   NOT NULL DEFAULT 0.30,
     frequency_min                INT            NOT NULL,
@@ -83,10 +76,8 @@ CREATE TABLE IF NOT EXISTS national_rail_schedules (
     first_train_time             TIME           NOT NULL,
     last_train_time              TIME           NOT NULL,
     operates_on                  TEXT[]         NOT NULL,
-    stops_in_order               TEXT[]         NOT NULL,
     -- Express trains pass through stations without stopping
     passed_through_stations      TEXT[],
-    travel_time_from_origin_min  JSONB          NOT NULL,
     -- Fare rates stored per class to avoid a separate fare table
     standard_base_fare           NUMERIC(5,2)   NOT NULL DEFAULT 2.50,
     standard_per_stop_rate       NUMERIC(5,2)   NOT NULL DEFAULT 1.50,
@@ -95,7 +86,41 @@ CREATE TABLE IF NOT EXISTS national_rail_schedules (
     is_express_premium           BOOLEAN        NOT NULL DEFAULT FALSE
 );
 
--- 5. Seat layout — one row per physical seat per schedule
+-- 5. Metro schedule stops — one row per scheduled stop.
+--    This junction table keeps stop sequence in 1NF/3NF instead of
+--    storing ordered station IDs in an array column.
+CREATE TABLE IF NOT EXISTS metro_schedule_stops (
+    schedule_id                 VARCHAR(20) NOT NULL
+        REFERENCES metro_schedules(schedule_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    station_id                  VARCHAR(10) NOT NULL
+        REFERENCES metro_stations(station_id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    stop_order                  INT         NOT NULL CHECK (stop_order > 0),
+    travel_time_from_origin_min INT         NOT NULL CHECK (travel_time_from_origin_min >= 0),
+    PRIMARY KEY (schedule_id, stop_order),
+    UNIQUE (schedule_id, station_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_metro_schedule_stops_station
+    ON metro_schedule_stops(station_id, schedule_id, stop_order);
+
+-- 6. National rail schedule stops — one row per scheduled stop.
+--    Normalising stop order makes origin/destination order checks relational
+--    and avoids array-position logic in the schema.
+CREATE TABLE IF NOT EXISTS national_rail_schedule_stops (
+    schedule_id                 VARCHAR(20) NOT NULL
+        REFERENCES national_rail_schedules(schedule_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    station_id                  VARCHAR(10) NOT NULL
+        REFERENCES national_rail_stations(station_id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    stop_order                  INT         NOT NULL CHECK (stop_order > 0),
+    travel_time_from_origin_min INT         NOT NULL CHECK (travel_time_from_origin_min >= 0),
+    PRIMARY KEY (schedule_id, stop_order),
+    UNIQUE (schedule_id, station_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nr_schedule_stops_station
+    ON national_rail_schedule_stops(station_id, schedule_id, stop_order);
+
+-- 7. Seat layout — one row per physical seat per schedule
 --    Only normal services (SL01-SL04) have assigned seating.
 CREATE TABLE IF NOT EXISTS national_rail_seat_layouts (
     layout_id   VARCHAR(10)  NOT NULL,
@@ -109,7 +134,7 @@ CREATE TABLE IF NOT EXISTS national_rail_seat_layouts (
     PRIMARY KEY (schedule_id, coach, seat_id)
 );
 
--- 6. Registered users
+-- 8. Registered users
 --    SOFT DELETE: is_active = FALSE deactivates the account without
 --    removing the row, preserving booking history and audit trails.
 --    Password is stored as a bcrypt hash (never plain text).
@@ -131,8 +156,8 @@ CREATE TABLE IF NOT EXISTS registered_users (
     is_active       BOOLEAN      NOT NULL DEFAULT TRUE
 );
 
--- 7. National rail bookings
-CREATE TABLE IF NOT EXISTS bookings (
+-- 9. National rail bookings
+CREATE TABLE IF NOT EXISTS national_rail_bookings (
     -- BK-XXXXXX format generated at runtime; VARCHAR(20) gives headroom
     booking_id              VARCHAR(20)  PRIMARY KEY,
     user_id                 VARCHAR(20)  NOT NULL
@@ -156,7 +181,7 @@ CREATE TABLE IF NOT EXISTS bookings (
     travelled_at            TIMESTAMPTZ
 );
 
--- 8. Metro travel history (single tickets and day passes)
+-- 10. Metro travel history (single tickets and day passes)
 CREATE TABLE IF NOT EXISTS metro_travel_history (
     trip_id                 VARCHAR(20)  PRIMARY KEY,
     user_id                 VARCHAR(20)  NOT NULL
@@ -179,9 +204,9 @@ CREATE TABLE IF NOT EXISTS metro_travel_history (
     travelled_at            TIMESTAMPTZ
 );
 
--- 9. Payments
+-- 11. Payments
 --    booking_id is intentionally NOT a FK because it can reference
---    either bookings.booking_id (BK-...) or metro_travel_history.trip_id (MT...).
+--    either national_rail_bookings.booking_id (BK-...) or metro_travel_history.trip_id (MT...).
 --    This polymorphic pattern avoids a union-table or nullable FK pair.
 CREATE TABLE IF NOT EXISTS payments (
     payment_id  VARCHAR(20)  PRIMARY KEY,
@@ -192,7 +217,7 @@ CREATE TABLE IF NOT EXISTS payments (
     paid_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
--- 10. Feedback
+-- 12. Feedback
 --     Same polymorphic booking_id pattern as payments.
 CREATE TABLE IF NOT EXISTS feedback (
     feedback_id  VARCHAR(20)  PRIMARY KEY,
@@ -209,10 +234,10 @@ CREATE INDEX IF NOT EXISTS idx_users_email
     ON registered_users(lower(email));
 
 CREATE INDEX IF NOT EXISTS idx_bookings_user_date
-    ON bookings(user_id, travel_date DESC);
+    ON national_rail_bookings(user_id, travel_date DESC);
 
 CREATE INDEX IF NOT EXISTS idx_bookings_schedule_date
-    ON bookings(schedule_id, travel_date)
+    ON national_rail_bookings(schedule_id, travel_date)
     WHERE status <> 'cancelled';
 
 CREATE INDEX IF NOT EXISTS idx_metro_travel_user_date
@@ -228,13 +253,13 @@ CREATE INDEX IF NOT EXISTS idx_feedback_booking_id
 --  TASK 6 EXTENSION: Loyalty Points System
 --
 --  Motivation: reward passengers for completed journeys and
---  encourage repeat bookings.  Every $1 spent on a confirmed
+--  encourage repeat national_rail_bookings.  Every $1 spent on a confirmed
 --  national-rail booking earns 10 points.  Points can be
 --  queried per user and are recorded per booking so the history
 --  is fully auditable.
 --
 --  Design decisions:
---    * Separate table (not a column on bookings) so the points
+--    * Separate table (not a column on national_rail_bookings) so the points
 --      ledger can grow independently and supports future
 --      redemption rows with negative amounts.
 --    * source_booking_id is NOT NULL — every row must trace back
@@ -247,7 +272,7 @@ CREATE INDEX IF NOT EXISTS idx_feedback_booking_id
 
 -- 11. Loyalty points ledger
 --     One row per booking that earns points.
---     Earn rate: 10 points per USD spent on completed bookings.
+--     Earn rate: 10 points per USD spent on completed national_rail_bookings.
 CREATE TABLE IF NOT EXISTS loyalty_points (
     -- SERIAL PK: no natural key exists for a ledger entry
     id                  SERIAL        PRIMARY KEY,
@@ -256,7 +281,7 @@ CREATE TABLE IF NOT EXISTS loyalty_points (
         REFERENCES registered_users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
     -- The booking that triggered the earn event
     source_booking_id   VARCHAR(20)   NOT NULL
-        REFERENCES bookings(booking_id) ON DELETE CASCADE ON UPDATE CASCADE,
+        REFERENCES national_rail_bookings(booking_id) ON DELETE CASCADE ON UPDATE CASCADE,
     -- Points earned for this booking (amount_usd * 10, rounded to 2dp)
     points_earned       NUMERIC(10,2) NOT NULL CHECK (points_earned >= 0),
     -- Human-readable reason stored for display and debugging

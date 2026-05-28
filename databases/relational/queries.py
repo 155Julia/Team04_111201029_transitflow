@@ -5,7 +5,7 @@ This module handles all queries to PostgreSQL.
 
 TWO ROLES ARE SERVED HERE:
   1. Relational  → dual-network transit (metro + national rail),
-                   availability, fares, bookings, seat selection
+                   availability, fares, national_rail_bookings, seat selection
   2. Vector      → policy document similarity search (pgvector)
 
 STUDENT TASK
@@ -18,11 +18,12 @@ Functions prefixed with `execute_` are write operations (booking/cancellation).
 
 The vector functions (query_policy_vector_search, store_policy_document)
 are already implemented — do not modify them.
+
+TASK 6 EXTENSION: this file also implements loyalty-points ledger queries.
 """
 
 from __future__ import annotations
 
-import json
 import random
 import string
 from datetime import datetime, timezone
@@ -34,6 +35,9 @@ import psycopg2
 import psycopg2.extras
 
 from skeleton.config import PG_DSN, VECTOR_TOP_K, VECTOR_SIMILARITY_THRESHOLD
+
+
+# TASK 6 EXTENSION: loyalty-points ledger queries live near the end of this file.
 
 
 # ── Password helpers ──────────────────────────────────────────────────────────
@@ -100,14 +104,6 @@ def _new_user_id(cur) -> str:
     return f"RU{cur.fetchone()['next_num']:02d}"
 
 
-def _ids_match_route(stops: list[str], origin_id: str, destination_id: str) -> bool:
-    """Return True when both station ids appear in order in a stops list."""
-    try:
-        return stops.index(origin_id) < stops.index(destination_id)
-    except ValueError:
-        return False
-
-
 # Query and transaction functions below follow the schema in schema.sql.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -126,18 +122,30 @@ def query_national_rail_availability(
     Args:
         origin_id:       e.g. "NR01"
         destination_id:  e.g. "NR05"
-        travel_date:     e.g. "2025-06-01" — used to count bookings; omit for general info
+        travel_date:     e.g. "2025-06-01" — used to count national_rail_bookings; omit for general info
     """
     sql = """
         WITH matching AS (
             SELECT
                 s.*,
-                array_position(s.stops_in_order, %s) AS origin_pos,
-                array_position(s.stops_in_order, %s) AS destination_pos
+                os.stop_order AS origin_pos,
+                ds.stop_order AS destination_pos,
+                os.travel_time_from_origin_min AS origin_time_min,
+                ds.travel_time_from_origin_min AS destination_time_min,
+                array_agg(ss.station_id ORDER BY ss.stop_order) AS stops_in_order
             FROM national_rail_schedules s
-            WHERE array_position(s.stops_in_order, %s) IS NOT NULL
-              AND array_position(s.stops_in_order, %s) IS NOT NULL
-              AND array_position(s.stops_in_order, %s) < array_position(s.stops_in_order, %s)
+            JOIN national_rail_schedule_stops os
+              ON os.schedule_id = s.schedule_id
+             AND os.station_id = %s
+            JOIN national_rail_schedule_stops ds
+              ON ds.schedule_id = s.schedule_id
+             AND ds.station_id = %s
+            JOIN national_rail_schedule_stops ss
+              ON ss.schedule_id = s.schedule_id
+            WHERE os.stop_order < ds.stop_order
+              AND (%s::date IS NULL OR lower(to_char(%s::date, 'dy')) = ANY(s.operates_on))
+            GROUP BY s.schedule_id, os.stop_order, ds.stop_order,
+                     os.travel_time_from_origin_min, ds.travel_time_from_origin_min
         )
         SELECT
             m.schedule_id,
@@ -155,10 +163,7 @@ def query_national_rail_availability(
             m.stops_in_order,
             m.passed_through_stations,
             m.destination_pos - m.origin_pos AS stops_travelled,
-            (
-                (m.travel_time_from_origin_min ->> %s)::int
-                - (m.travel_time_from_origin_min ->> %s)::int
-            ) AS travel_time_min,
+            (m.destination_time_min - m.origin_time_min) AS travel_time_min,
             m.standard_base_fare,
             m.standard_per_stop_rate,
             m.first_base_fare,
@@ -177,7 +182,7 @@ def query_national_rail_availability(
         ) seats ON seats.schedule_id = m.schedule_id
         LEFT JOIN (
             SELECT schedule_id, COUNT(DISTINCT coach || ':' || seat_id) AS booked_seats
-            FROM bookings
+            FROM national_rail_bookings
             WHERE %s::date IS NOT NULL
               AND travel_date = %s::date
               AND status <> 'cancelled'
@@ -193,12 +198,8 @@ def query_national_rail_availability(
                 (
                     origin_id,
                     destination_id,
-                    origin_id,
-                    destination_id,
-                    origin_id,
-                    destination_id,
-                    destination_id,
-                    origin_id,
+                    travel_date,
+                    travel_date,
                     origin_id,
                     destination_id,
                     travel_date,
@@ -260,12 +261,23 @@ def query_metro_schedules(origin_id: str, destination_id: str) -> list[dict]:
         WITH matching AS (
             SELECT
                 s.*,
-                array_position(s.stops_in_order, %s) AS origin_pos,
-                array_position(s.stops_in_order, %s) AS destination_pos
+                os.stop_order AS origin_pos,
+                ds.stop_order AS destination_pos,
+                os.travel_time_from_origin_min AS origin_time_min,
+                ds.travel_time_from_origin_min AS destination_time_min,
+                array_agg(ss.station_id ORDER BY ss.stop_order) AS stops_in_order
             FROM metro_schedules s
-            WHERE array_position(s.stops_in_order, %s) IS NOT NULL
-              AND array_position(s.stops_in_order, %s) IS NOT NULL
-              AND array_position(s.stops_in_order, %s) < array_position(s.stops_in_order, %s)
+            JOIN metro_schedule_stops os
+              ON os.schedule_id = s.schedule_id
+             AND os.station_id = %s
+            JOIN metro_schedule_stops ds
+              ON ds.schedule_id = s.schedule_id
+             AND ds.station_id = %s
+            JOIN metro_schedule_stops ss
+              ON ss.schedule_id = s.schedule_id
+            WHERE os.stop_order < ds.stop_order
+            GROUP BY s.schedule_id, os.stop_order, ds.stop_order,
+                     os.travel_time_from_origin_min, ds.travel_time_from_origin_min
         )
         SELECT
             m.schedule_id,
@@ -281,10 +293,7 @@ def query_metro_schedules(origin_id: str, destination_id: str) -> list[dict]:
             m.operates_on,
             m.stops_in_order,
             m.destination_pos - m.origin_pos AS stops_travelled,
-            (
-                (m.travel_time_from_origin_min ->> %s)::int
-                - (m.travel_time_from_origin_min ->> %s)::int
-            ) AS travel_time_min,
+            (m.destination_time_min - m.origin_time_min) AS travel_time_min,
             m.base_fare_usd,
             m.per_stop_rate_usd
         FROM matching m
@@ -299,12 +308,6 @@ def query_metro_schedules(origin_id: str, destination_id: str) -> list[dict]:
                 (
                     origin_id,
                     destination_id,
-                    origin_id,
-                    destination_id,
-                    origin_id,
-                    destination_id,
-                    destination_id,
-                    origin_id,
                     origin_id,
                     destination_id,
                 ),
@@ -368,7 +371,7 @@ def query_available_seats(
           AND l.fare_class = %s
           AND NOT EXISTS (
               SELECT 1
-              FROM bookings b
+              FROM national_rail_bookings b
               WHERE b.schedule_id = l.schedule_id
                 AND b.travel_date = %s::date
                 AND b.coach = l.coach
@@ -423,6 +426,7 @@ def query_user_profile(user_email: str) -> Optional[dict]:
             surname,
             phone,
             date_of_birth,
+            EXTRACT(YEAR FROM date_of_birth)::int AS year_of_birth,
             is_active,
             registered_at
         FROM registered_users
@@ -465,7 +469,7 @@ def query_user_bookings(user_email: str) -> dict:
             dest.name AS destination_name,
             p.payment_id,
             p.status AS payment_status
-        FROM bookings b
+        FROM national_rail_bookings b
         JOIN registered_users u ON u.user_id = b.user_id
         JOIN national_rail_schedules s ON s.schedule_id = b.schedule_id
         JOIN national_rail_stations orig ON orig.station_id = b.origin_station_id
@@ -580,22 +584,24 @@ def execute_booking(
                 """
                 SELECT
                     s.*,
-                    array_position(s.stops_in_order, %s) AS origin_pos,
-                    array_position(s.stops_in_order, %s) AS destination_pos
+                    os.stop_order AS origin_pos,
+                    ds.stop_order AS destination_pos
                 FROM national_rail_schedules s
+                JOIN national_rail_schedule_stops os
+                  ON os.schedule_id = s.schedule_id
+                 AND os.station_id = %s
+                JOIN national_rail_schedule_stops ds
+                  ON ds.schedule_id = s.schedule_id
+                 AND ds.station_id = %s
                 WHERE s.schedule_id = %s
+                  AND os.stop_order < ds.stop_order
                 """,
                 (origin_station_id, destination_station_id, schedule_id),
             )
             schedule = cur.fetchone()
             if not schedule:
                 conn.rollback()
-                return False, "Schedule not found."
-            if not _ids_match_route(
-                schedule["stops_in_order"], origin_station_id, destination_station_id
-            ):
-                conn.rollback()
-                return False, "This schedule does not serve the requested stations in order."
+                return False, "Schedule not found or does not serve the requested stations in order."
 
             stops_travelled = schedule["destination_pos"] - schedule["origin_pos"]
             base = (
@@ -619,7 +625,7 @@ def execute_booking(
                       AND l.fare_class = %s
                       AND NOT EXISTS (
                           SELECT 1
-                          FROM bookings b
+                          FROM national_rail_bookings b
                           WHERE b.schedule_id = l.schedule_id
                             AND b.travel_date = %s::date
                             AND b.coach = l.coach
@@ -654,7 +660,7 @@ def execute_booking(
                 cur.execute(
                     """
                     SELECT 1
-                    FROM bookings
+                    FROM national_rail_bookings
                     WHERE schedule_id = %s
                       AND travel_date = %s::date
                       AND coach = %s
@@ -670,7 +676,7 @@ def execute_booking(
 
             for _ in range(10):
                 booking_id = _gen_booking_id()
-                cur.execute("SELECT 1 FROM bookings WHERE booking_id = %s", (booking_id,))
+                cur.execute("SELECT 1 FROM national_rail_bookings WHERE booking_id = %s", (booking_id,))
                 if not cur.fetchone():
                     break
             else:
@@ -688,7 +694,7 @@ def execute_booking(
 
             cur.execute(
                 """
-                INSERT INTO bookings (
+                INSERT INTO national_rail_bookings (
                     booking_id, user_id, schedule_id, origin_station_id,
                     destination_station_id, travel_date, departure_time,
                     ticket_type, fare_class, coach, seat_id, stops_travelled,
@@ -762,7 +768,7 @@ def execute_cancellation(booking_id: str, user_id: str) -> tuple[bool, dict | st
                     s.service_type,
                     p.payment_id,
                     p.status AS payment_status
-                FROM bookings b
+                FROM national_rail_bookings b
                 JOIN national_rail_schedules s ON s.schedule_id = b.schedule_id
                 LEFT JOIN payments p ON p.booking_id = b.booking_id
                 WHERE b.booking_id = %s
@@ -813,7 +819,7 @@ def execute_cancellation(booking_id: str, user_id: str) -> tuple[bool, dict | st
 
             cur.execute(
                 """
-                UPDATE bookings
+                UPDATE national_rail_bookings
                 SET status = 'cancelled'
                 WHERE booking_id = %s
                 RETURNING booking_id, status
@@ -932,7 +938,8 @@ def login_user(email: str, password: str) -> Optional[dict]:
     """
     sql = """
         SELECT user_id, email, full_name, first_name, surname,
-               phone, date_of_birth, is_active, password AS pw_hash
+               phone, date_of_birth, EXTRACT(YEAR FROM date_of_birth)::int AS year_of_birth,
+               is_active, password AS pw_hash
         FROM registered_users
         WHERE lower(email) = lower(%s)
           AND is_active = TRUE
@@ -1006,7 +1013,7 @@ def query_loyalty_balance(user_id: str) -> dict:
     Return the total loyalty points balance for a user.
 
     Points are earned at a rate of 10 per USD spent on completed
-    national-rail bookings.  This function sums all rows in the
+    national-rail national_rail_bookings.  This function sums all rows in the
     loyalty_points ledger for the given user.
 
     Args:
@@ -1034,7 +1041,7 @@ def query_loyalty_history(user_id: str) -> list[dict]:
     """
     Return the full loyalty-points earn history for a user, newest first.
 
-    Joins to bookings so the caller can display the route and travel date
+    Joins to national_rail_bookings so the caller can display the route and travel date
     alongside the points earned.
 
     Args:
@@ -1057,7 +1064,7 @@ def query_loyalty_history(user_id: str) -> list[dict]:
             orig.name             AS origin_name,
             dest.name             AS destination_name
         FROM loyalty_points lp
-        JOIN bookings b
+        JOIN national_rail_bookings b
             ON b.booking_id = lp.source_booking_id
         JOIN national_rail_stations orig
             ON orig.station_id = b.origin_station_id
@@ -1094,7 +1101,7 @@ def execute_earn_loyalty_points(booking_id: str) -> tuple[bool, dict | str]:
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                "SELECT booking_id, user_id, amount_usd, status FROM bookings WHERE booking_id = %s",
+                "SELECT booking_id, user_id, amount_usd, status FROM national_rail_bookings WHERE booking_id = %s",
                 (booking_id,),
             )
             booking = cur.fetchone()
@@ -1103,7 +1110,7 @@ def execute_earn_loyalty_points(booking_id: str) -> tuple[bool, dict | str]:
                 return False, f"Booking {booking_id} not found."
             if booking["status"] == "cancelled":
                 conn.rollback()
-                return False, "Cancelled bookings do not earn loyalty points."
+                return False, "Cancelled national_rail_bookings do not earn loyalty points."
 
             cur.execute(
                 "SELECT 1 FROM loyalty_points WHERE source_booking_id = %s",
