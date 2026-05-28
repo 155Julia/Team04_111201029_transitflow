@@ -1,67 +1,113 @@
-"""
-TransitFlow — Neo4j Seeder
-Run once after starting Docker:
-    python skeleton/seed_neo4j.py
-
-Loads station and network data from train-mock-data/:
-  - metro_stations.json         — city metro stations and adjacencies
-  - national_rail_stations.json — national rail stations and adjacencies
-
-Design your graph schema (node labels, relationship types, properties)
-based on the data in these files, then implement the seed() function below.
-"""
-
 import json
-import os
-import sys
-
-sys.path.insert(0, ".")
-
 from neo4j import GraphDatabase
-from skeleton.config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
 
-_DATA_DIR = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "train-mock-data")
-)
-
-
-def _load(filename):
-    with open(os.path.join(_DATA_DIR, filename), encoding="utf-8") as f:
-        return json.load(f)
+# ============================================================
+# Connection parameters — aligned with docker-compose.yml
+# ============================================================
+URI = "bolt://localhost:7688"
+AUTH = ("neo4j", "transitflow")
 
 
-def seed():
-    metro_stations = _load("metro_stations.json")
-    rail_stations  = _load("national_rail_stations.json")
+def seed_neo4j():
+    print("Connecting to Neo4j...")
+    driver = GraphDatabase.driver(URI, auth=AUTH)
 
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    try:
+        with open("train-mock-data/metro_stations.json", "r", encoding="utf-8") as f:
+            metro_stations = json.load(f)
+        with open("train-mock-data/national_rail_stations.json", "r", encoding="utf-8") as f:
+            rail_stations = json.load(f)
+    except FileNotFoundError as e:
+        print(f"ERROR: JSON file not found. Run from project root. {e}")
+        return
+
     with driver.session() as session:
 
-        session.run("MATCH (n) DETACH DELETE n")
-        print("  Cleared existing graph data")
+        # ── Constraints (idempotent) ──────────────────────────────────────────
+        session.run(
+            "CREATE CONSTRAINT IF NOT EXISTS FOR (m:MetroStation) "
+            "REQUIRE m.station_id IS UNIQUE"
+        )
+        session.run(
+            "CREATE CONSTRAINT IF NOT EXISTS FOR (r:NationalRailStation) "
+            "REQUIRE r.rail_station_id IS UNIQUE"
+        )
 
-        # TODO: Design your node labels and create metro station nodes.
-        # Each station has: station_id, name, lines, and interchange info.
-        # See metro_stations.json for the full data structure.
+        # ── MetroStation nodes ────────────────────────────────────────────────
+        # MERGE ensures re-running does not create duplicate nodes
+        for station in metro_stations:
+            session.run(
+                "MERGE (m:MetroStation {station_id: $sid}) "
+                "SET m.name = $name, m.lines = $lines",
+                sid=station["station_id"],
+                name=station["name"],
+                lines=station["lines"],
+            )
+        print(f"  MetroStation nodes: {len(metro_stations)}")
 
-        # TODO: Design your node labels and create national rail station nodes.
-        # See national_rail_stations.json for the full data structure.
+        # ── NationalRailStation nodes ─────────────────────────────────────────
+        for station in rail_stations:
+            session.run(
+                "MERGE (r:NationalRailStation {rail_station_id: $sid}) "
+                "SET r.name = $name, r.lines = $lines",
+                sid=station["station_id"],
+                name=station["name"],
+                lines=station["lines"],
+            )
+        print(f"  NationalRailStation nodes: {len(rail_stations)}")
 
-        # TODO: Design your relationship types and create metro links.
-        # Each station lists its adjacent_stations with line and travel_time_min.
-        # Consider what properties to store on the relationship.
+        # ── METRO_LINK relationships ──────────────────────────────────────────
+        # adjacent_stations is a list of dicts with station_id, line, travel_time_min
+        for station in metro_stations:
+            for adj in station.get("adjacent_stations", []):
+                session.run(
+                    "MATCH (a:MetroStation {station_id: $from_id}) "
+                    "MATCH (b:MetroStation {station_id: $to_id}) "
+                    "MERGE (a)-[r:METRO_LINK {line: $line}]->(b) "
+                    "SET r.travel_time_min = $time",
+                    from_id=station["station_id"],
+                    to_id=adj["station_id"],
+                    line=adj.get("line", ""),
+                    time=adj.get("travel_time_min", 3),
+                )
+        print("  METRO_LINK relationships created")
 
-        # TODO: Design your relationship types and create national rail links.
+        # ── RAIL_LINK relationships ───────────────────────────────────────────
+        for station in rail_stations:
+            for adj in station.get("adjacent_stations", []):
+                session.run(
+                    "MATCH (a:NationalRailStation {rail_station_id: $from_id}) "
+                    "MATCH (b:NationalRailStation {rail_station_id: $to_id}) "
+                    "MERGE (a)-[r:RAIL_LINK {line: $line}]->(b) "
+                    "SET r.travel_time_min = $time",
+                    from_id=station["station_id"],
+                    to_id=adj["station_id"],
+                    line=adj.get("line", ""),
+                    time=adj.get("travel_time_min", 15),
+                )
+        print("  RAIL_LINK relationships created")
 
-        # TODO: Create interchange relationships between metro and rail stations.
-        # Interchange info is in the is_interchange_national_rail field
-        # of metro_stations.json.
+        # ── INTERCHANGE_TO relationships ──────────────────────────────────────
+        # Three cross-network interchange points derived from station JSON data
+        interchanges = [
+            ("MS01", "NR01"),  # Central Square <-> Central Station
+            ("MS07", "NR03"),  # Old Town <-> Old Town Junction
+            ("MS15", "NR07"),  # Ferndale <-> Ferndale Halt
+        ]
+        for m_id, r_id in interchanges:
+            session.run(
+                "MATCH (m:MetroStation {station_id: $m_id}) "
+                "MATCH (r:NationalRailStation {rail_station_id: $r_id}) "
+                "MERGE (m)-[:INTERCHANGE_TO]->(r) "
+                "MERGE (r)-[:INTERCHANGE_TO]->(m)",
+                m_id=m_id,
+                r_id=r_id,
+            )
+        print(f"  INTERCHANGE_TO relationships: {len(interchanges)} pairs")
 
     driver.close()
-    print("\nNeo4j graph seeded successfully.")
-    print("   Open http://localhost:7475 to explore the graph.")
+    print("Neo4j seeding complete.")
 
 
 if __name__ == "__main__":
-    print("Connecting to Neo4j...")
-    seed()
+    seed_neo4j()

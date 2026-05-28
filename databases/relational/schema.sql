@@ -14,8 +14,8 @@ CREATE TABLE IF NOT EXISTS metro_stations (
     lines TEXT[] NOT NULL, -- 儲存該站所屬的多條地鐵線，例: {'M1', 'M2'}
     is_interchange_metro BOOLEAN DEFAULT FALSE,
     is_interchange_national_rail BOOLEAN DEFAULT FALSE,
-    interchange_national_rail_station_id VARCHAR(10),
-    adjacent_stations TEXT[] -- 鄰近車站代碼陣列
+    interchange_national_rail_station_id VARCHAR(10)
+    -- 注意：adjacent_stations 不存在此表，路網拓撲由 Neo4j 管理
 );
 
 -- 2. 國鐵車站表
@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS registered_users (
 
 -- 7. 國鐵訂票表
 CREATE TABLE IF NOT EXISTS bookings (
-    booking_id VARCHAR(10) PRIMARY KEY,
+    booking_id VARCHAR(20) PRIMARY KEY,
     user_id VARCHAR(10) REFERENCES registered_users(user_id),
     schedule_id VARCHAR(10) REFERENCES national_rail_schedules(schedule_id),
     origin_station_id VARCHAR(10) REFERENCES national_rail_stations(station_id),
