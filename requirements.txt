@@ -4,6 +4,7 @@
 # Database drivers
 psycopg2-binary>=2.9.9       # PostgreSQL + pgvector
 neo4j>=5.18.0                # Neo4j graph database
+bcrypt>=4.1.0                # Adaptive salted password hashing
 
 # LLM providers (install both; only one is used at runtime)
 google-genai>=1.0.0             # Gemini (new SDK, replaces google-generativeai)

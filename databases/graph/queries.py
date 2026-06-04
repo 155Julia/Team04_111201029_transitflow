@@ -23,6 +23,7 @@ from skeleton.config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
 
 # Transfer penalty added to every INTERCHANGE_TO edge (minutes)
 _INTERCHANGE_PENALTY_MIN = 5
+_MAX_ROUTE_HOPS = 12
 
 
 def _driver():
@@ -70,7 +71,7 @@ def query_shortest_route(
       AND (end.station_id = $end   OR end.rail_station_id = $end)
 
     // Enumerate simple paths, then rank by actual travel-time weight.
-    MATCH p = (start)-[:{rel_pattern}*..40]-(end)
+    MATCH p = (start)-[:{rel_pattern}*..{_MAX_ROUTE_HOPS}]-(end)
     WHERE ALL(n IN nodes(p) WHERE single(m IN nodes(p) WHERE m = n))
 
     // Sum actual travel time: INTERCHANGE_TO = 5 min penalty, others use stored weight
@@ -83,11 +84,11 @@ def query_shortest_route(
          ) AS total_time_min
 
     RETURN
-        [n IN nodes(p) | {
+        [n IN nodes(p) | {{
             station_id: coalesce(n.station_id, n.rail_station_id),
             name:       n.name,
             lines:      n.lines
-        }] AS path,
+        }}] AS path,
         total_time_min
     ORDER BY total_time_min ASC
     LIMIT 1
@@ -150,7 +151,7 @@ def query_cheapest_route(
       AND (end.station_id = $end   OR end.rail_station_id = $end)
 
     // Enumerate simple paths, then rank by fare weight so fare_class can affect the result.
-    MATCH p = (start)-[:{rel_pattern}*..40]-(end)
+    MATCH p = (start)-[:{rel_pattern}*..{_MAX_ROUTE_HOPS}]-(end)
     WHERE ALL(n IN nodes(p) WHERE single(m IN nodes(p) WHERE m = n))
 
     // Accumulate fare: metro $0.30/stop, NR varies by fare_class, interchange free
@@ -165,11 +166,11 @@ def query_cheapest_route(
          ) AS total_fare_usd
 
     RETURN
-        [n IN nodes(p) | {
+        [n IN nodes(p) | {{
             station_id: coalesce(n.station_id, n.rail_station_id),
             name:       n.name,
             lines:      n.lines
-        }] AS path,
+        }}] AS path,
         [n IN nodes(p) | coalesce(n.name, 'Unknown')] AS stations,
         round(total_fare_usd * 100) / 100             AS total_fare_usd
     ORDER BY total_fare_usd ASC
@@ -228,7 +229,7 @@ def query_alternative_routes(
       AND (end.station_id = $end   OR end.rail_station_id = $end)
 
     // Variable-length simple path so we can filter avoided nodes.
-    MATCH p = (start)-[:{rel_pattern}*..40]-(end)
+    MATCH p = (start)-[:{rel_pattern}*..{_MAX_ROUTE_HOPS}]-(end)
 
     // Exclude any path that passes through the avoided station
     WHERE NONE(n IN nodes(p)
@@ -238,10 +239,10 @@ def query_alternative_routes(
     WITH p, length(p) AS hops
     ORDER BY hops ASC
 
-    RETURN [n IN nodes(p) | {
+    RETURN [n IN nodes(p) | {{
         station_id: coalesce(n.station_id, n.rail_station_id),
         name:       n.name
-    }] AS legs_list
+    }}] AS legs_list
     LIMIT $max_routes
     """
     with _driver() as driver:
@@ -277,7 +278,7 @@ def query_interchange_path(origin_id: str, destination_id: str) -> dict:
       AND (end.station_id = $end   OR end.rail_station_id = $end)
 
     // Require the path to cross at least one INTERCHANGE_TO edge.
-    MATCH p = (start)-[:METRO_LINK|RAIL_LINK|INTERCHANGE_TO*..40]-(end)
+    MATCH p = (start)-[:METRO_LINK|RAIL_LINK|INTERCHANGE_TO*..12]-(end)
     WHERE ANY(r IN relationships(p) WHERE type(r) = 'INTERCHANGE_TO')
       AND ALL(n IN nodes(p) WHERE single(m IN nodes(p) WHERE m = n))
 
@@ -400,12 +401,19 @@ def query_station_connections(station_id: str) -> list[dict]:
     // Match direct neighbours via any link type
     MATCH (curr)-[r:METRO_LINK|RAIL_LINK|INTERCHANGE_TO]-(neighbor)
 
-    RETURN
+    WITH
         coalesce(neighbor.station_id, neighbor.rail_station_id) AS station_id,
-        neighbor.name                                           AS name,
-        neighbor.lines                                          AS lines,
-        coalesce(r.travel_time_min, 5)                         AS travel_time_min,
-        type(r)                                                 AS relationship_type
+        neighbor.name AS name,
+        neighbor.lines AS lines,
+        min(coalesce(r.travel_time_min, 5)) AS travel_time_min,
+        collect(DISTINCT type(r)) AS relationship_types
+    RETURN
+        station_id,
+        name,
+        lines,
+        travel_time_min,
+        relationship_types
+    ORDER BY station_id
     """
     with _driver() as driver:
         with driver.session() as session:
