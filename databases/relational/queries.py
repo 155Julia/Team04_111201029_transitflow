@@ -850,6 +850,7 @@ def execute_cancellation(booking_id: str, user_id: str) -> tuple[bool, dict | st
             conn.commit()
             return True, {
                 **updated,
+                "refund_amount": refund,
                 "refund_amount_usd": refund,
                 "refund_percent": refund_percent,
                 "admin_fee_usd": admin_fee,
