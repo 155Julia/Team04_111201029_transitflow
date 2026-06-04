@@ -1043,6 +1043,8 @@ def query_loyalty_balance(user_id: str) -> dict:
     """
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # TASK 6 EXTENSION: read the loyalty ledger for one user and aggregate
+            # every earn row into a dashboard-ready balance.
             cur.execute(sql, (user_id, user_id))
             return dict(cur.fetchone())
 
@@ -1085,6 +1087,8 @@ def query_loyalty_history(user_id: str) -> list[dict]:
     """
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # TASK 6 EXTENSION: join loyalty rows back to bookings and stations so
+            # every credited point transaction remains auditable to its journey.
             cur.execute(sql, (user_id,))
             return [dict(row) for row in cur.fetchall()]
 
@@ -1110,6 +1114,8 @@ def execute_earn_loyalty_points(booking_id: str) -> tuple[bool, dict | str]:
     conn.autocommit = False
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # TASK 6 EXTENSION: lock the earn operation to an existing rail booking;
+            # loyalty points are never created without a real source booking.
             cur.execute(
                 "SELECT booking_id, user_id, amount_usd, status FROM national_rail_bookings WHERE booking_id = %s",
                 (booking_id,),
@@ -1122,6 +1128,8 @@ def execute_earn_loyalty_points(booking_id: str) -> tuple[bool, dict | str]:
                 conn.rollback()
                 return False, "Cancelled national_rail_bookings do not earn loyalty points."
 
+            # TASK 6 EXTENSION: pre-check the unique ledger key so duplicate earn
+            # attempts return a friendly message instead of double-crediting points.
             cur.execute(
                 "SELECT 1 FROM loyalty_points WHERE source_booking_id = %s",
                 (booking_id,),
@@ -1133,6 +1141,8 @@ def execute_earn_loyalty_points(booking_id: str) -> tuple[bool, dict | str]:
             # Calculate points: 10 per USD, rounded to 2 decimal places
             points = _money(Decimal(str(booking["amount_usd"])) * 10)
 
+            # TASK 6 EXTENSION: write one auditable ledger row for this booking.
+            # The transaction commits only after the insert and balance read succeed.
             cur.execute(
                 """
                 INSERT INTO loyalty_points
@@ -1149,6 +1159,8 @@ def execute_earn_loyalty_points(booking_id: str) -> tuple[bool, dict | str]:
             )
             row = dict(cur.fetchone())
 
+            # TASK 6 EXTENSION: re-read the user's aggregate balance after the earn
+            # insert so the caller can immediately display the updated total.
             cur.execute(
                 "SELECT COALESCE(SUM(points_earned), 0) AS total FROM loyalty_points WHERE user_id = %s",
                 (booking["user_id"],),

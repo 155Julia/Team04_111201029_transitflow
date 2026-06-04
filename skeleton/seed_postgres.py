@@ -490,6 +490,8 @@ def seed_loyalty_points(cur):
     for booking in data:
         if booking["status"] != "completed":
             continue
+        # TASK 6 EXTENSION: create one initial loyalty earn row for each completed
+        # mock rail booking so live demos have ledger data immediately after seeding.
         points = round(float(booking["amount_usd"]) * 10, 2)
         rows.append((
             booking["user_id"],

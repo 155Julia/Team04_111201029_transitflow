@@ -83,80 +83,12 @@ The expected checks are:
 
 ---
 
-## Section 7 Draft for Design Document
+## Design Document Section 7
 
-### Section 7 — Optional Extension: Loyalty Points System
+The official Section 7 write-up is included in `DESIGN_DOCUMENT.md` under:
 
-#### Motivation
-
-The loyalty-points extension adds a user-facing retention feature to TransitFlow.
-Passengers earn points for completed national-rail journeys, which makes repeat
-bookings visible in the database and gives the assistant a concrete account-related
-feature beyond schedule lookup, fare calculation, and cancellation.
-
-#### Database Changes
-
-```sql
-CREATE TABLE IF NOT EXISTS loyalty_points (
-    id                  SERIAL        PRIMARY KEY,
-    user_id             VARCHAR(20)   NOT NULL
-        REFERENCES registered_users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
-    source_booking_id   VARCHAR(20)   NOT NULL
-        REFERENCES national_rail_bookings(booking_id) ON DELETE CASCADE ON UPDATE CASCADE,
-    points_earned       NUMERIC(10,2) NOT NULL CHECK (points_earned >= 0),
-    description         TEXT          NOT NULL DEFAULT 'Journey completed',
-    earned_at           TIMESTAMPTZ   NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_loyalty_user_id
-    ON loyalty_points(user_id);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_loyalty_booking_unique
-    ON loyalty_points(source_booking_id);
+```text
+Section 7 — Optional Extension: Loyalty Points System
 ```
 
-The extension uses a separate ledger table instead of adding one balance column
-to `registered_users`. This preserves a full audit trail, prevents double-crediting
-with a unique index on `source_booking_id`, and allows future redemption rows to be
-added without changing the user table.
-
-#### Example Queries
-
-```sql
-SELECT
-    user_id,
-    COALESCE(SUM(points_earned), 0) AS total_points,
-    COUNT(*) AS transaction_count
-FROM loyalty_points
-WHERE user_id = 'RU01'
-GROUP BY user_id;
-```
-
-Expected output shape:
-
-| user_id | total_points | transaction_count |
-|---|---:|---:|
-| RU01 | positive numeric value | positive integer |
-
-```sql
-SELECT lp.points_earned, b.booking_id, b.travel_date,
-       orig.name AS origin_name, dest.name AS destination_name
-FROM loyalty_points lp
-JOIN national_rail_bookings b ON b.booking_id = lp.source_booking_id
-JOIN national_rail_stations orig ON orig.station_id = b.origin_station_id
-JOIN national_rail_stations dest ON dest.station_id = b.destination_station_id
-WHERE lp.user_id = 'RU01'
-ORDER BY lp.earned_at DESC;
-```
-
-Expected output shape: one row per credited booking, including points earned,
-booking ID, travel date, and route names.
-
-#### Testing Evidence
-
-Testing should show four screenshots or copied query outputs:
-
-1. `SELECT COUNT(*) FROM loyalty_points;` after seeding.
-2. The same count after re-running seeding to prove idempotency.
-3. A balance lookup for one user.
-4. A loyalty history lookup joined to `national_rail_bookings` and station names.
+It covers the required motivation, schema changes, SQL examples, expected output, and testing evidence.
