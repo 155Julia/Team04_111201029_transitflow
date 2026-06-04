@@ -42,20 +42,45 @@ from skeleton.config import PG_DSN, VECTOR_TOP_K, VECTOR_SIMILARITY_THRESHOLD
 
 # ── Password helpers ──────────────────────────────────────────────────────────
 
-def _hash_password(plain: str) -> str:
-    """Return a bcrypt hash of the plain-text password.
-
-    bcrypt is used because it is adaptive (cost factor can be increased
-    over time) and includes a random salt automatically, making rainbow-
-    table attacks infeasible.  The result is a 60-character string safe
-    to store in VARCHAR(255).
+def _hash_password(plain: str) -> tuple[str, str]:
     """
-    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
+    # TASK 6 EXTENSION: Bcrypt Integration with Table Decoupling
+    Used during registration: Hashes a plain-text password using bcrypt 
+    and separates the generated salt from the final hash string.
+    
+    Returns:
+        tuple[str, str]: (salt_str, hash_str) mapped to the user_credentials table.
+    """
+    password_bytes = plain.encode('utf-8')
+    
+    # 1. Generate a random bcrypt salt (12 rounds of key stretching for high brute-force resistance)
+    salt_bytes = bcrypt.gensalt(rounds=12)
+    salt_str = salt_bytes.decode('utf-8')
+    
+    # 2. Compute the final cryptographic hash
+    hash_bytes = bcrypt.hashpw(password_bytes, salt_bytes)
+    hash_str = hash_bytes.decode('utf-8')
+    
+    return salt_str, hash_str
 
 
-def _check_password(plain: str, hashed: str) -> bool:
-    """Return True when plain matches the stored bcrypt hash."""
-    return bcrypt.checkpw(plain.encode(), hashed.encode())
+def _check_password(plain: str, stored_salt: str, stored_hash: str) -> bool:
+    """
+    Used during login verification: Compares the user-input plain password 
+    against the stored salt and hash retrieved from the user_credentials table.
+    
+    Returns:
+        bool: True if the password matches the hash, False otherwise.
+    """
+    # 1. Encode the database-retrieved salt and hash back to bytes
+    salt_bytes = stored_salt.encode('utf-8')
+    hash_bytes = stored_hash.encode('utf-8')
+    
+    # 2. Re-hash the provided plain-text password using the original extracted salt
+    current_hash_bytes = bcrypt.hashpw(plain.encode('utf-8'), salt_bytes)
+    
+    # 3. Perform a strict comparison between the computed hash and the stored hash
+    return current_hash_bytes == hash_bytes
 
 
 def _connect():
