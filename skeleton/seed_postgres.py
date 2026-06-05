@@ -273,52 +273,58 @@ def seed_seat_layouts(cur):
 
 def seed_users(cur):
     data = load("registered_users.json")
-    rows = []
+    # Insert into registered_users (no password/secret fields — those go to user_credentials)
+    user_rows = []
+    cred_rows = []
     for user in data:
         name_parts = user["full_name"].split(maxsplit=1)
         first_name = name_parts[0]
         surname = name_parts[1] if len(name_parts) > 1 else ""
-        # Hash the plain-text password from mock data using bcrypt
-        # so the database never stores plain text, matching register_user()
-        hashed_pw = bcrypt.hashpw(
-            user["password"].encode(), bcrypt.gensalt()
-        ).decode()
-        rows.append(
+        user_rows.append(
             (
                 user["user_id"],
                 user["full_name"],
                 first_name,
                 surname,
                 user["email"],
-                hashed_pw,
                 user.get("phone"),
                 user.get("date_of_birth"),
-                user.get("secret_question"),
-                user.get("secret_answer"),
                 user.get("registered_at"),
                 user.get("is_active", True),
             )
         )
+        # Hash password and generate salt for user_credentials table
+        salt_bytes = bcrypt.gensalt(rounds=12)
+        salt_str = salt_bytes.decode("utf-8")
+        hash_str = bcrypt.hashpw(user["password"].encode(), salt_bytes).decode("utf-8")
+        cred_rows.append(
+            (
+                user["user_id"],
+                salt_str,
+                hash_str,
+                user.get("secret_question"),
+                user.get("secret_answer"),
+            )
+        )
+
     n = insert_many(
         cur,
         "registered_users",
         [
-            "user_id",
-            "full_name",
-            "first_name",
-            "surname",
-            "email",
-            "password",
-            "phone",
-            "date_of_birth",
-            "secret_question",
-            "secret_answer",
-            "registered_at",
-            "is_active",
+            "user_id", "full_name", "first_name", "surname",
+            "email", "phone", "date_of_birth", "registered_at", "is_active",
         ],
-        rows,
+        user_rows,
     )
     print(f"  registered_users: {n} rows")
+
+    m = insert_many(
+        cur,
+        "user_credentials",
+        ["user_id", "salt_str", "password_hash", "secret_question", "secret_answer"],
+        cred_rows,
+    )
+    print(f"  user_credentials: {m} rows")
 
 
 def seed_national_rail_bookings(cur):

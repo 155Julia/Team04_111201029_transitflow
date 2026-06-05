@@ -134,10 +134,9 @@ CREATE TABLE IF NOT EXISTS national_rail_seat_layouts (
     PRIMARY KEY (schedule_id, coach, seat_id)
 );
 
--- 8. Registered users
---    SOFT DELETE: is_active = FALSE deactivates the account without
---    removing the row, preserving booking history and audit trails.
---    Password is stored as a bcrypt hash (never plain text).
+-- ── 8. Registered Users Main Table (Core Profile) ───────────────────
+-- Stores non-sensitive, general membership information.
+-- This table is decoupled from authentication details to minimize data exposure.
 CREATE TABLE IF NOT EXISTS registered_users (
     -- VARCHAR(20) to match source IDs like "RU01"; new users get RU<nn>
     user_id         VARCHAR(20)  PRIMARY KEY,
@@ -145,15 +144,25 @@ CREATE TABLE IF NOT EXISTS registered_users (
     first_name      VARCHAR(50),
     surname         VARCHAR(50),
     email           VARCHAR(150) NOT NULL UNIQUE,
-    -- bcrypt hash (60 chars); plain text is never stored
-    password        VARCHAR(255) NOT NULL,
     phone           VARCHAR(30),
     date_of_birth   DATE,
-    secret_question VARCHAR(255),
-    secret_answer   VARCHAR(255),
     registered_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     -- Soft-delete flag: FALSE = deactivated, TRUE = active
+    -- Preserves booking history and audit trails without deleting the row.
     is_active       BOOLEAN      NOT NULL DEFAULT TRUE
+);
+
+-- ── 8b. User Credentials Security Table (Isolated Auth) ──────────────
+-- Stores highly sensitive authentication secrets under a strict 1:1 relationship.
+-- Implements "Defense in Depth" to protect credentials from general profile queries.
+CREATE TABLE IF NOT EXISTS user_credentials (
+    user_id         VARCHAR(20)  PRIMARY KEY REFERENCES registered_users(user_id) ON DELETE CASCADE,
+    -- Strictly isolated storage for both the independent salt string and the final hash
+    salt_str        VARCHAR(255) NOT NULL,
+    password_hash   VARCHAR(255) NOT NULL,
+    -- Security question and answer are isolated here for privacy protection
+    secret_question VARCHAR(255),
+    secret_answer   VARCHAR(255)
 );
 
 -- 9. National rail bookings
