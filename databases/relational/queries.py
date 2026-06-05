@@ -905,8 +905,8 @@ def register_user(
     Register a new user.
     Returns (True, user_id) on success or (False, error_message) on failure.
 
-    Password is hashed with bcrypt before storage — plain text is never
-    written to the database.  Duplicate emails are rejected gracefully.
+    Profile goes to registered_users; bcrypt salt+hash and secret Q&A go to
+    user_credentials (Defense in Depth — credentials never mixed with profile).
     """
     email = email.strip().lower()
     first_name = first_name.strip()
@@ -918,7 +918,6 @@ def register_user(
     conn.autocommit = False
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # Reject duplicate emails before attempting the insert
             cur.execute("SELECT 1 FROM registered_users WHERE lower(email) = lower(%s)", (email,))
             if cur.fetchone():
                 conn.rollback()
@@ -928,31 +927,29 @@ def register_user(
             full_name = f"{first_name} {surname}"
             date_of_birth = f"{int(year_of_birth):04d}-01-01"
 
-            # Hash the password with bcrypt — never store plain text
-            hashed_pw = _hash_password(password)
-
+            # Insert profile (no password here)
             cur.execute(
                 """
                 INSERT INTO registered_users (
-                    user_id, full_name, first_name, surname, email, password,
-                    date_of_birth, secret_question, secret_answer, is_active
+                    user_id, full_name, first_name, surname, email,
+                    date_of_birth, is_active
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s::date, %s, %s, TRUE)
+                VALUES (%s, %s, %s, %s, %s, %s::date, TRUE)
                 RETURNING user_id
                 """,
-                (
-                    user_id,
-                    full_name,
-                    first_name,
-                    surname,
-                    email,
-                    hashed_pw,
-                    date_of_birth,
-                    secret_question,
-                    secret_answer,
-                ),
+                (user_id, full_name, first_name, surname, email, date_of_birth),
             )
             new_user_id = cur.fetchone()["user_id"]
+
+            # Hash password and insert into isolated user_credentials table
+            salt_str, hash_str = _hash_password(password)
+            cur.execute(
+                """
+                INSERT INTO user_credentials (user_id, salt_str, password_hash, secret_question, secret_answer)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (new_user_id, salt_str, hash_str, secret_question, secret_answer),
+            )
             conn.commit()
             return True, new_user_id
     except Exception as exc:
@@ -964,20 +961,20 @@ def register_user(
 
 def login_user(email: str, password: str) -> Optional[dict]:
     """
-    Verify credentials using bcrypt.
+    Verify credentials using bcrypt against user_credentials table.
     Returns a user dict on success or None on failure.
     Dict keys: user_id, email, full_name, first_name, surname, phone, date_of_birth, is_active.
-
-    bcrypt.checkpw() is used so the comparison is always done against
-    the stored hash — the plain-text password is never logged or stored.
     """
     sql = """
-        SELECT user_id, email, full_name, first_name, surname,
-               phone, date_of_birth, EXTRACT(YEAR FROM date_of_birth)::int AS year_of_birth,
-               is_active, password AS pw_hash
-        FROM registered_users
-        WHERE lower(email) = lower(%s)
-          AND is_active = TRUE
+        SELECT u.user_id, u.email, u.full_name, u.first_name, u.surname,
+               u.phone, u.date_of_birth,
+               EXTRACT(YEAR FROM u.date_of_birth)::int AS year_of_birth,
+               u.is_active,
+               c.salt_str, c.password_hash
+        FROM registered_users u
+        JOIN user_credentials c ON c.user_id = u.user_id
+        WHERE lower(u.email) = lower(%s)
+          AND u.is_active = TRUE
     """
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -985,22 +982,22 @@ def login_user(email: str, password: str) -> Optional[dict]:
             row = cur.fetchone()
             if not row:
                 return None
-            # Verify the supplied password against the stored bcrypt hash
-            if not _check_password(password, row["pw_hash"]):
+            if not _check_password(password, row["salt_str"], row["password_hash"]):
                 return None
-            # Return user dict without exposing the hash
             result = dict(row)
-            result.pop("pw_hash", None)
+            result.pop("salt_str", None)
+            result.pop("password_hash", None)
             return result
 
 
 def get_user_secret_question(email: str) -> Optional[str]:
     """Return the secret question for a registered email, or None if not found."""
     sql = """
-        SELECT secret_question
-        FROM registered_users
-        WHERE lower(email) = lower(%s)
-          AND is_active = TRUE
+        SELECT c.secret_question
+        FROM registered_users u
+        JOIN user_credentials c ON c.user_id = u.user_id
+        WHERE lower(u.email) = lower(%s)
+          AND u.is_active = TRUE
     """
     with _connect() as conn:
         with conn.cursor() as cur:
@@ -1013,10 +1010,11 @@ def verify_secret_answer(email: str, answer: str) -> bool:
     """Return True if the provided answer matches the stored secret answer (case-insensitive)."""
     sql = """
         SELECT 1
-        FROM registered_users
-        WHERE lower(email) = lower(%s)
-          AND lower(trim(secret_answer)) = lower(trim(%s))
-          AND is_active = TRUE
+        FROM registered_users u
+        JOIN user_credentials c ON c.user_id = u.user_id
+        WHERE lower(u.email) = lower(%s)
+          AND lower(trim(c.secret_answer)) = lower(trim(%s))
+          AND u.is_active = TRUE
     """
     with _connect() as conn:
         with conn.cursor() as cur:
@@ -1025,18 +1023,19 @@ def verify_secret_answer(email: str, answer: str) -> bool:
 
 
 def update_password(email: str, new_password: str) -> bool:
-    """Update the password for a user with a fresh bcrypt hash.
-    Returns True if the row was updated."""
-    hashed_pw = _hash_password(new_password)
+    """Update the password hash in user_credentials. Returns True if updated."""
+    salt_str, hash_str = _hash_password(new_password)
     sql = """
-        UPDATE registered_users
-        SET password = %s
-        WHERE lower(email) = lower(%s)
-          AND is_active = TRUE
+        UPDATE user_credentials
+        SET salt_str = %s, password_hash = %s
+        WHERE user_id = (
+            SELECT user_id FROM registered_users
+            WHERE lower(email) = lower(%s) AND is_active = TRUE
+        )
     """
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (hashed_pw, email.strip()))
+            cur.execute(sql, (salt_str, hash_str, email.strip()))
             return cur.rowcount > 0
 
 

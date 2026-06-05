@@ -10,7 +10,8 @@ The main relational entities are:
 
 | Entity | Purpose | Key Fields |
 | --- | --- | --- |
-| `registered_users` | Stores passenger accounts and authentication-related fields | `user_id` PK, `email`, `password`, `is_active` |
+| `registered_users` | Stores passenger profile data; no credentials stored here | `user_id` PK, `email`, `is_active` |
+| `user_credentials` | Isolated table for bcrypt salt, hash, and secret Q&A (Defense in Depth) | `user_id` PK/FK, `salt_str`, `password_hash` |
 | `metro_stations` | Stores Metro station reference data | `station_id` PK, `name`, `lines`, `adjacent_stations` |
 | `national_rail_stations` | Stores National Rail station reference data | `station_id` PK, `name`, `lines` |
 | `metro_schedules` | Stores Metro timetable records | `schedule_id` PK, `origin_station_id` FK, `destination_station_id` FK |
@@ -96,15 +97,17 @@ A fully normalized design could move these values into a separate fare-rate look
 
 Keeping these fare-rate fields on `national_rail_schedules` allows the availability query to compute estimated fares without an extra join. This is a deliberate read-performance trade-off. Fare rules change much less frequently than booking and search operations, so the risk of update anomalies is lower than the benefit of faster reads on the most common user workflow.
 
-### 2.4 Password Hashing and Salt Management
+### 2.4 Password Hashing, Salt Management, and Credential Isolation
 
-The `registered_users.password` field does not store plain-text passwords. The application hashes passwords with `bcrypt` before inserting or updating user records. Seeded mock-user passwords are also converted to bcrypt hashes before being inserted.
+Passwords are not stored in `registered_users`. The application separates profile data from authentication credentials using two tables. `registered_users` holds non-sensitive profile information such as name, email, and active status. A second table, `user_credentials`, holds only the bcrypt salt, the password hash, and the secret question and answer. This design follows the principle of Defense in Depth: a query that reads user profile data cannot accidentally expose password hashes, and an attacker who reads the profile table gains no authentication material.
+
+The application hashes passwords with `bcrypt` at `rounds=12` before inserting or updating credentials. Seeded mock-user passwords are also converted to bcrypt hashes before being inserted, so the database never contains plain text.
 
 `bcrypt` was selected instead of MD5, SHA-1, or SHA-256 because those algorithms are fast hashes. Fast hashes are useful for file checksums, but they are weak for password storage because an attacker can test a large number of guesses per second using commodity GPUs.
 
 `bcrypt` is designed for password security. It includes key stretching through a configurable cost factor, so each password verification intentionally requires repeated computation. As hardware becomes faster, the cost factor can be increased to keep brute-force attacks expensive.
 
-`bcrypt` also manages salt automatically. Each password hash includes a randomly generated salt, and the salt is embedded in the stored bcrypt string. This prevents rainbow-table attacks. For example, if users `RU01` and `RU02` both use the same password, the stored hashes will still be different because each hash uses a different random salt. An attacker cannot use one precomputed hash lookup to identify both passwords.
+`bcrypt` also manages salt automatically. Each password hash includes a randomly generated salt, and the salt is embedded in the stored bcrypt string. This prevents rainbow-table attacks. For example, if users `RU01` and `RU02` both use the same password, the stored hashes will still be different because each hash uses a different random salt.
 
 ## Section 3 — Graph Database Design Rationale
 
@@ -198,9 +201,6 @@ CREATE CONSTRAINT IF NOT EXISTS FOR (m:MetroStation)
 
 CREATE CONSTRAINT IF NOT EXISTS FOR (r:NationalRailStation)
     REQUIRE r.rail_station_id IS UNIQUE;
-
-CREATE CONSTRAINT IF NOT EXISTS FOR (r:NationalRailStation)
-    REQUIRE r.station_id IS UNIQUE;
 ```
 
 These identifiers were chosen because they already exist in the mock data and are human-readable. They also make seeding idempotent: `MERGE` can match existing stations instead of creating duplicates every time the seed script is rerun.
@@ -286,7 +286,9 @@ The practical consequence is serious: a 3072-dimensional vector cannot be insert
 
 One important design decision was to use human-readable string IDs such as `RU01`, `MS01`, and `NR01` instead of UUIDs for the mock TransitFlow data. This matches the provided JSON files and makes live testing easier because queries can be written with visible station and user IDs. In a larger production system, UUIDs or generated surrogate keys might be preferred to avoid coordination problems across services.
 
-Another design decision was to separate physical route traversal into Neo4j instead of forcing all route logic into PostgreSQL. PostgreSQL remains strong for bookings, payments, users, and transactional integrity, while Neo4j is better suited to variable-length routing and delay-ripple queries. This split lets each database handle the workload it is best at.
+A second design decision was to isolate password credentials into a dedicated `user_credentials` table rather than storing them in `registered_users`. This separation follows the Defense in Depth principle: general profile queries can read name, email, and status without touching authentication material. If a query bug or over-broad permission exposed the user profile table, no credentials would be leaked. The `user_credentials` table stores only the bcrypt salt string, the password hash, and the secret question and answer — none of which appear in the profile table.
+
+A third design decision was to separate physical route traversal into Neo4j instead of forcing all route logic into PostgreSQL. PostgreSQL remains strong for bookings, payments, users, and transactional integrity, while Neo4j is better suited to variable-length routing and delay-ripple queries. This split lets each database handle the workload it is best at.
 
 In production, we would change the way secrets and migrations are managed. Database passwords, API keys, and model-provider settings should be stored in a managed secret store instead of local `.env` files. Schema changes should also be managed through migration tooling rather than repeatedly loading a development `schema.sql`, because production systems need controlled rollbacks, auditability, and zero-data-loss deployment practices.
 
