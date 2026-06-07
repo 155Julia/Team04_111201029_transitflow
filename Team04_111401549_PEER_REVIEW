@@ -1,0 +1,188 @@
+# Peer Review Report
+
+> **Instructions:** Complete this form **individually and independently**.
+> Do not discuss your ratings with teammates before submitting.
+> Submit via EEClass as a **separate, confidential submission** — not in the shared team repo.
+> Your teammates will not see this report.
+>
+> Reference the team's `WORK_ALLOCATION_TEMPLATE.md` when completing this form.
+
+---
+
+## Your Details
+
+| Field | Your answer |
+|-------|------------|
+| Full Name | 吳欣庭 |
+| Student ID | 111401549|
+| Team ID |4 |
+| Date submitted | 2026/06/07|
+
+---
+
+## Rating Scale
+
+| Rating | Meaning |
+|--------|---------|
+| **5** | Exceeded expectations — delivered more than agreed; helped teammates; consistently high quality |
+| **4** | Met expectations fully — delivered exactly what was agreed; on time; good quality |
+| **3** | Mostly met expectations — minor shortfalls; one or two items completed late or with help |
+| **2** | Partially met expectations — noticeable gaps; teammates had to cover some tasks |
+| **1** | Did not meet expectations — significant tasks left incomplete; very limited contribution |
+
+---
+
+## Section A — Self-Assessment
+
+### A1. What did you personally implement?
+
+List the specific tasks, functions, files, or document sections that you were the primary author of.
+Be specific (e.g., "I designed all 12 tables in schema.sql and implemented query_national_rail_availability and execute_booking").
+
+> Relational schema design、Core availability & fare queries、Seat & user queries、Optional extension、ER Diagram、Vector / RAG Design
+
+---
+
+### A2. What challenges did you face?
+
+Describe any technical or collaboration difficulties you personally encountered and how you resolved them.
+
+> Lost files due to Git mistakes; rewrote , will be more careful next time.
+
+---
+
+### A3. Self-rating
+
+| Criterion | Rating (1–5) | Justification (1–2 sentences) |
+|-----------|-------------|-------------------------------|
+| I delivered the tasks assigned to me in the work allocation | 4| Successfully got the job done.|
+| The quality of my work was satisfactory | 4|Delivered acceptable work quality. |
+| I communicated well and kept the team informed |4 | Promptly replied to messages.|
+| I met deadlines agreed within the team | 4|Zero missed deadlines. |
+| **Overall self-rating** | 4|Fulfilled individual duties. |
+
+---
+
+### A4. Estimated contribution percentage
+
+What percentage of the total team effort do you estimate you personally contributed?
+
+> My estimated contribution: **33.3%**
+
+---
+
+## Section B — Peer Assessments
+
+Complete one subsection per teammate. Add or remove subsections to match your team size.
+If your team has 2 members, complete B1 only. If 3 members, complete B1 and B2.
+
+---
+
+### B1. Assessment of Teammate 1
+
+| Field | Your answer |
+|-------|------------|
+| Teammate's full name |洪佳宇 |
+| Teammate's student ID |111201029 |
+
+#### What did this teammate deliver?
+
+List the tasks, functions, files, or document sections that this teammate was the primary author of,
+based on what you observed during the project (compare against the work allocation).
+
+> Relational schema design 、Write operations、Authentication queries、PostgreSQL seeding、Optional extension、Normalisation Justification、Reflection & Trade-offs
+
+#### Did their actual contribution match the agreed work allocation?
+
+> Yes
+
+#### Peer rating for this teammate
+
+| Criterion | Rating (1–5) | Justification (1–2 sentences) |
+|-----------|-------------|-------------------------------|
+| Delivered the tasks assigned in the work allocation |4 |Successfully got the job done. |
+| Quality of their work was satisfactory | 4|The quality of deliverables was decent. |
+| Communicated well and kept the team informed |4 | Very quick to respond to messages.|
+| Met deadlines agreed within the team |4 | Never missed a deadline or left tasks unfinished.|
+| **Overall rating for this teammate** |4 |Always did their part. |
+
+#### Estimated contribution percentage for this teammate
+
+> My estimate of their contribution: **33.3%**
+
+---
+
+### B2. Assessment of Teammate 2
+
+| Field | Your answer |
+|-------|------------|
+| Teammate's full name | 112707527|
+| Teammate's student ID | 吳怡臻|
+
+#### What did this teammate deliver?
+
+> Relational schema design、 Neo4j graph design & seeding、Neo4j query functions、Optional extension、Graph Database Design Rationale、AI Tool Usage Evidence
+
+#### Did their actual contribution match the agreed work allocation?
+
+> Yes
+
+#### Peer rating for this teammate
+
+| Criterion | Rating (1–5) | Justification (1–2 sentences) |
+|-----------|-------------|-------------------------------|
+| Delivered the tasks assigned in the work allocation |4 |Successfully got the job done. |
+| Quality of their work was satisfactory |4 |The quality of deliverables was decent. |
+| Communicated well and kept the team informed |4 |Very quick to respond to messages. |
+| Met deadlines agreed within the team | 4| Never missed a deadline or left tasks unfinished.|
+| **Overall rating for this teammate** |4 | Always did their part.|
+
+#### Estimated contribution percentage for this teammate
+
+> My estimate of their contribution: **33.3%**
+
+---
+
+## Section C — Contribution Percentage Summary
+
+All members (including yourself) must sum to 100%.
+
+| Member | Your estimated % | Notes |
+|--------|----------------|-------|
+| Yourself | 33.3% | |
+| Teammate 1 | 33.3% | |
+| Teammate 2 | 33.3% |  |
+| **Total** | **100%** | |
+
+---
+
+## Section D — Overall Team Reflection
+
+### D1. What went well in the team's collaboration?
+
+> We are still not super familiar with Git, so our contents kept clashing with each other. It’s taking us some extra time to sort everything out.
+
+---
+
+### D2. What would you do differently if you did this project again?
+
+> Next time, we’ll make sure to read through the grading criteria and all the documents in detail much sooner. This will prevent us from having to redo the project at the last minute just to meet the requirements.
+
+---
+
+### D3. Is there anything else the markers should know about team dynamics or individual contributions?
+
+This is optional. Use it only if there is important context that the ratings above do not capture
+(e.g., a member had a documented personal emergency, or a member was unresponsive for a significant period).
+
+> Nothing to add
+
+---
+
+## Declaration
+
+I confirm that this peer review reflects my honest and independent assessment.
+I understand it will be kept confidential from my teammates.
+
+**Signed:** ![HT](https://hackmd.io/_uploads/BJvA6nM-Me.jpg)
+**Date:** 2026/06/07
