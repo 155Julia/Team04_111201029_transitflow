@@ -190,9 +190,10 @@ TOOLS = [
         "parameters": {
             "schedule_id":  {"type": "string", "description": "e.g. NR_SCH01"},
             "travel_date":  {"type": "string", "description": "YYYY-MM-DD"},
+            "departure_time": {"type": "string", "description": "HH:MM departure time selected from the schedule's departure_times list"},
             "fare_class":   {"type": "string", "description": "standard or first"},
         },
-        "required": ["schedule_id", "travel_date", "fare_class"],
+        "required": ["schedule_id", "travel_date", "departure_time", "fare_class"],
     },
     {
         "name": "make_booking",
@@ -206,11 +207,12 @@ TOOLS = [
             "origin_station_id":      {"type": "string", "description": "e.g. NR01"},
             "destination_station_id": {"type": "string", "description": "e.g. NR05"},
             "travel_date":            {"type": "string", "description": "YYYY-MM-DD"},
+            "departure_time":         {"type": "string", "description": "HH:MM departure time selected from availability results"},
             "fare_class":             {"type": "string", "description": "standard or first"},
             "seat_id":                {"type": "string", "description": "Specific seat ID (e.g. B05) or 'any' for auto-assign"},
             "ticket_type":            {"type": "string", "description": "single or return (default single)"},
         },
-        "required": ["schedule_id", "origin_station_id", "destination_station_id", "travel_date", "fare_class", "seat_id"],
+        "required": ["schedule_id", "origin_station_id", "destination_station_id", "travel_date", "departure_time", "fare_class", "seat_id"],
     },
     {
         "name": "cancel_booking",
@@ -280,8 +282,8 @@ check_national_rail_availability(origin_id, destination_id, travel_date?)
 get_national_rail_fare(schedule_id, fare_class, stops_travelled)
 check_metro_availability(origin_id, destination_id)
 calculate_metro_fare(schedule_id, stops_travelled)
-get_available_seats(schedule_id, travel_date, fare_class)
-make_booking(schedule_id, origin_station_id, destination_station_id, travel_date, fare_class, seat_id, ticket_type?)
+get_available_seats(schedule_id, travel_date, departure_time, fare_class)
+make_booking(schedule_id, origin_station_id, destination_station_id, travel_date, departure_time, fare_class, seat_id, ticket_type?)
 cancel_booking(booking_id)
 get_user_bookings()
 search_policy(query)
@@ -349,11 +351,15 @@ def _execute_tool(
             result = query_user_bookings(current_user_email)
 
         elif tool_name == "get_available_seats":
+            if not params.get("departure_time"):
+                return json.dumps({"error": "Please choose a departure_time before checking seats."})
             result = query_available_seats(**params)
 
         elif tool_name == "make_booking":
             if not current_user_email:
                 return json.dumps({"error": "You must be logged in to make a booking."})
+            if not params.get("departure_time"):
+                return json.dumps({"error": "Please choose a departure_time before making a booking."})
             profile = query_user_profile(current_user_email)
             if not profile:
                 return json.dumps({"error": "User profile not found."})
@@ -363,6 +369,7 @@ def _execute_tool(
                 origin_station_id=params["origin_station_id"],
                 destination_station_id=params["destination_station_id"],
                 travel_date=params["travel_date"],
+                departure_time=params["departure_time"],
                 fare_class=params["fare_class"],
                 seat_id=params["seat_id"],
                 ticket_type=params.get("ticket_type", "single"),
@@ -580,7 +587,7 @@ Or if no tool needed: {{"tool_calls": []}}
 STATIONS: Metro=MS01-MS20, Rail=NR01-NR10
 USER: {current_user_email or "not logged in"}
 get_user_bookings: call (no params) when logged-in user asks about their bookings, tickets, or travel history.
-make_booking/cancel_booking: only if user is logged in.
+make_booking/cancel_booking: only if user is logged in. For booking, ask the user to choose a departure_time from availability results before calling make_booking.
 Route/path/journey questions: use find_route. Policy questions: use search_policy.
 Never use "" as a param value. Omit optional params if unknown.
 
@@ -612,7 +619,7 @@ JSON:"""
                 "You are a tool router. Call the right tool based on the user message. "
                 f"Logged-in user: {current_user_email or 'none'}. "
                 "My bookings/tickets/travel history → get_user_bookings (no params). "
-                "Book a ticket / make a booking → check_national_rail_availability first, then make_booking. "
+                "Book a ticket / make a booking → check_national_rail_availability first; only call make_booking after the user chose a departure_time. "
                 "Cancel a booking → cancel_booking. "
                 "Policy/rules/conduct/compensation/luggage/bicycle questions → search_policy. "
                 "Route/directions/fastest/quickest/how-to-get/path questions → find_route ONLY (never get_metro_fare). "

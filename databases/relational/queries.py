@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import random
 import string
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
@@ -117,6 +117,26 @@ def _money(value: Decimal | float | int) -> Decimal:
     return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def _time_text(value) -> str:
+    """Return HH:MM for PostgreSQL time values or user-provided time strings."""
+    if hasattr(value, "strftime"):
+        return value.strftime("%H:%M")
+    parsed = datetime.strptime(str(value).strip()[:5], "%H:%M")
+    return parsed.strftime("%H:%M")
+
+
+def _generated_departure_times(first_train_time, last_train_time, frequency_min: int) -> list[str]:
+    """Expand a frequency-based schedule into selectable departure times."""
+    first = datetime.strptime(_time_text(first_train_time), "%H:%M")
+    last = datetime.strptime(_time_text(last_train_time), "%H:%M")
+    times: list[str] = []
+    current = first
+    while current <= last:
+        times.append(current.strftime("%H:%M"))
+        current += timedelta(minutes=int(frequency_min))
+    return times
+
+
 def _new_user_id(cur) -> str:
     """Return the next RU-style user id."""
     cur.execute(
@@ -194,9 +214,7 @@ def query_national_rail_availability(
             m.first_base_fare,
             m.first_per_stop_rate,
             COALESCE(seats.total_seats, 0) AS total_seats,
-            COALESCE(booked.booked_seats, 0) AS booked_seats,
-            GREATEST(COALESCE(seats.total_seats, 0) - COALESCE(booked.booked_seats, 0), 0)
-                AS available_seats
+            COALESCE(booked.booked_seats_by_departure, '{}'::jsonb) AS booked_seats_by_departure
         FROM matching m
         JOIN national_rail_stations orig ON orig.station_id = %s
         JOIN national_rail_stations dest ON dest.station_id = %s
@@ -206,12 +224,22 @@ def query_national_rail_availability(
             GROUP BY schedule_id
         ) seats ON seats.schedule_id = m.schedule_id
         LEFT JOIN (
-            SELECT schedule_id, COUNT(DISTINCT coach || ':' || seat_id) AS booked_seats
-            FROM national_rail_bookings
-            WHERE %s::date IS NOT NULL
-              AND travel_date = %s::date
-              AND status <> 'cancelled'
-              AND seat_id IS NOT NULL
+            SELECT
+                schedule_id,
+                jsonb_object_agg(to_char(departure_time, 'HH24:MI'), booked_seats)
+                    AS booked_seats_by_departure
+            FROM (
+                SELECT
+                    schedule_id,
+                    departure_time,
+                    COUNT(DISTINCT coach || ':' || seat_id) AS booked_seats
+                FROM national_rail_bookings
+                WHERE %s::date IS NOT NULL
+                  AND travel_date = %s::date
+                  AND status <> 'cancelled'
+                  AND seat_id IS NOT NULL
+                GROUP BY schedule_id, departure_time
+            ) counts
             GROUP BY schedule_id
         ) booked ON booked.schedule_id = m.schedule_id
         ORDER BY m.first_train_time, m.schedule_id
@@ -231,7 +259,27 @@ def query_national_rail_availability(
                     travel_date,
                 ),
             )
-            return [dict(row) for row in cur.fetchall()]
+            rows = [dict(row) for row in cur.fetchall()]
+            for row in rows:
+                row["departure_times"] = _generated_departure_times(
+                    row["first_train_time"],
+                    row["last_train_time"],
+                    row["frequency_min"],
+                )
+                booked_by_departure = row.pop("booked_seats_by_departure", {}) or {}
+                total_seats = int(row.get("total_seats") or 0)
+                row["availability_by_departure"] = [
+                    {
+                        "departure_time": departure_time,
+                        "booked_seats": int(booked_by_departure.get(departure_time, 0)),
+                        "available_seats": max(
+                            total_seats - int(booked_by_departure.get(departure_time, 0)),
+                            0,
+                        ),
+                    }
+                    for departure_time in row["departure_times"]
+                ]
+            return rows
 
 
 def query_national_rail_fare(
@@ -371,15 +419,17 @@ def query_metro_fare(schedule_id: str, stops_travelled: int) -> Optional[dict]:
 def query_available_seats(
     schedule_id: str,
     travel_date: str,
+    departure_time: str,
     fare_class: str,
 ) -> list[dict]:
     """
     Return available seats for a national rail journey on a given date.
 
     Args:
-        schedule_id:  e.g. "NR_SCH01"
-        travel_date:  e.g. "2025-06-01"
-        fare_class:   "standard" or "first"
+        schedule_id:     e.g. "NR_SCH01"
+        travel_date:     e.g. "2025-06-01"
+        departure_time:  e.g. "07:00"
+        fare_class:      "standard" or "first"
 
     Returns:
         List of dicts: {seat_id, coach, row, column}
@@ -399,6 +449,7 @@ def query_available_seats(
               FROM national_rail_bookings b
               WHERE b.schedule_id = l.schedule_id
                 AND b.travel_date = %s::date
+                AND b.departure_time = %s::time
                 AND b.coach = l.coach
                 AND b.seat_id = l.seat_id
                 AND b.status <> 'cancelled'
@@ -407,7 +458,10 @@ def query_available_seats(
     """
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(sql, (schedule_id, fare_class.lower().strip(), travel_date))
+            cur.execute(
+                sql,
+                (schedule_id, fare_class.lower().strip(), travel_date, _time_text(departure_time)),
+            )
             return [dict(row) for row in cur.fetchall()]
 
 
@@ -573,6 +627,7 @@ def execute_booking(
     origin_station_id: str,
     destination_station_id: str,
     travel_date: str,
+    departure_time: str,
     fare_class: str,
     seat_id: str,
     ticket_type: str = "single",
@@ -586,6 +641,7 @@ def execute_booking(
         origin_station_id:      e.g. "NR01"
         destination_station_id: e.g. "NR05"
         travel_date:            e.g. "2025-06-01"
+        departure_time:         e.g. "07:00"
         fare_class:             "standard" or "first"
         seat_id:                e.g. "B05" (or "any" to auto-assign)
         ticket_type:            "single" (default) or "return"
@@ -600,6 +656,10 @@ def execute_booking(
         return False, "fare_class must be 'standard' or 'first'."
     if ticket_type not in {"single", "return"}:
         return False, "ticket_type must be 'single' or 'return'."
+    try:
+        departure_time = _time_text(departure_time)
+    except ValueError:
+        return False, "departure_time must be in HH:MM format."
 
     conn = psycopg2.connect(PG_DSN)
     conn.autocommit = False
@@ -636,6 +696,19 @@ def execute_booking(
             if not schedule:
                 conn.rollback()
                 return False, "Schedule not found or does not serve the requested stations in order."
+            valid_departure_times = _generated_departure_times(
+                schedule["first_train_time"],
+                schedule["last_train_time"],
+                schedule["frequency_min"],
+            )
+            if departure_time not in valid_departure_times:
+                conn.rollback()
+                return (
+                    False,
+                    "departure_time must match this schedule's generated timetable "
+                    f"({', '.join(valid_departure_times[:6])}"
+                    f"{'...' if len(valid_departure_times) > 6 else ''}).",
+                )
 
             stops_travelled = schedule["destination_pos"] - schedule["origin_pos"]
             base = (
@@ -662,6 +735,7 @@ def execute_booking(
                           FROM national_rail_bookings b
                           WHERE b.schedule_id = l.schedule_id
                             AND b.travel_date = %s::date
+                            AND b.departure_time = %s::time
                             AND b.coach = l.coach
                             AND b.seat_id = l.seat_id
                             AND b.status <> 'cancelled'
@@ -669,7 +743,7 @@ def execute_booking(
                     ORDER BY l.coach, l."row", l."column", l.seat_id
                     LIMIT 1
                     """,
-                    (schedule_id, fare_class, travel_date),
+                    (schedule_id, fare_class, travel_date, departure_time),
                 )
                 seat = cur.fetchone()
                 if not seat:
@@ -697,12 +771,13 @@ def execute_booking(
                     FROM national_rail_bookings
                     WHERE schedule_id = %s
                       AND travel_date = %s::date
+                      AND departure_time = %s::time
                       AND coach = %s
                       AND seat_id = %s
                       AND status <> 'cancelled'
                     LIMIT 1
                     """,
-                    (schedule_id, travel_date, seat["coach"], seat["seat_id"]),
+                    (schedule_id, travel_date, departure_time, seat["coach"], seat["seat_id"]),
                 )
                 if cur.fetchone():
                     conn.rollback()
@@ -744,7 +819,7 @@ def execute_booking(
                     origin_station_id,
                     destination_station_id,
                     travel_date,
-                    schedule["first_train_time"],
+                    departure_time,
                     ticket_type,
                     fare_class,
                     seat["coach"],

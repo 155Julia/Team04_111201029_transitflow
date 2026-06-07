@@ -257,9 +257,10 @@ CREATE INDEX IF NOT EXISTS idx_bookings_schedule_date
     WHERE status <> 'cancelled';
 
 -- Prevents two active bookings from claiming the same physical seat
--- on the same service date, even under concurrent booking attempts.
+-- on the same service departure, even under concurrent booking attempts.
+DROP INDEX IF EXISTS idx_nr_active_seat_booking_unique;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_nr_active_seat_booking_unique
-    ON national_rail_bookings(schedule_id, travel_date, coach, seat_id)
+    ON national_rail_bookings(schedule_id, travel_date, departure_time, coach, seat_id)
     WHERE status <> 'cancelled' AND seat_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_metro_travel_user_date

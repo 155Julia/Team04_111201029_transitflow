@@ -90,6 +90,8 @@ This technique — letting the LLM choose which functions to call — is called 
 
 > **Login-aware routing:** If a user is logged in, the agent injects their name, email, and user ID into the system prompt. Auth-gated tools (`get_user_bookings`, `make_booking`, `cancel_booking`) use the logged-in identity automatically — the LLM never needs to ask the user for their email or ID.
 
+> **Departure-time-aware booking extension:** The original schedule data stores each national rail service as `first_train_time + frequency_min + last_train_time`, not as one row per train departure. This project expands those frequency-based schedules into selectable `departure_times` at query time. Seat lookup and booking now require `departure_time`, so availability is tracked per actual service departure instead of sharing one seat pool for the entire `schedule_id + travel_date`.
+
 ---
 
 ### Step 3 — The tools query the real databases
@@ -459,9 +461,9 @@ Show my bookings
 → Tests `get_user_bookings` — returns your booking history from PostgreSQL (empty for a newly registered user)
 
 ```
-Book me a standard ticket from Central Station (NR01) to Stonehaven (NR05) on 2026-06-01
+Book me a standard ticket from Central Station (NR01) to Stonehaven (NR05) on 2026-06-01 at 07:00
 ```
-→ Tests the multi-step booking flow: `check_national_rail_availability` → `get_available_seats` → `make_booking`
+→ Tests the multi-step booking flow: `check_national_rail_availability` → choose one returned `departure_time` → `get_available_seats` → `make_booking`
 
 ```
 Cancel booking BK-XXXXXX
